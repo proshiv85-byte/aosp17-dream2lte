@@ -1,0 +1,28 @@
+From e381fbdf5b929f93a93b50db4962645a14bdfcdf Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <248141944+proshiv85-byte@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 21:48:48 +0300
+Subject: [PATCH] Deduplicate partition file lists
+
+The /system/vendor compat symlink is listed both by Make and by the
+Soong extra install zips, which makes build_image's CopyInputDirectory
+fail with FileExistsError on non-dynamic-partition devices with a
+separate vendor image.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I07858bb8ec8c18fe2dc0f6bf8fdacf20dbed50a4
+---
+ core/Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/core/Makefile b/core/Makefile
+index 39cad66..249ed8d 100644
+--- a/core/Makefile
++++ b/core/Makefile
+@@ -196,6 +196,7 @@ $(1): $$(HOST_OUT_EXECUTABLES)/extra_install_zips_file_list $(foreach p,$(call r
+ 	echo -n > $$@
+ 	$$(foreach f,$$(PRIVATE_FILES),echo "$$(f)" >> $$@$$(newline))
+ 	$$(HOST_OUT_EXECUTABLES)/extra_install_zips_file_list $(2) $$(PRIVATE_EXTRA_INSTALL_ZIPS) >> $$@
++	sort -u -o $$@ $$@
+ endef
+ 
+ # -----------------------------------------------------------------

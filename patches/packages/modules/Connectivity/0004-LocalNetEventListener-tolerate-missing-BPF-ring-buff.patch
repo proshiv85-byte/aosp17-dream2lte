@@ -1,0 +1,81 @@
+From 9c56b76a4c9d47b22b7d6226a7f8c08b98d50fda Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <248141944+proshiv85-byte@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 09:11:02 +0300
+Subject: [PATCH 4/5] LocalNetEventListener: tolerate missing BPF ring buffer
+
+The local network access event ring buffer needs kernel 5.8+ (BPF_MAP_TYPE_
+RINGBUF). On legacy kernels the map is never created and BpfRingbuf's
+constructor aborted system_server. Return no ring buffer instead and skip
+registering the fd listener.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I2f1d66584defc1dcae8c71ab0d4827831609057d
+---
+ .../native/libs/libeventpolling/LocalNetEventHandler.cpp | 9 +++++++++
+ .../include/libeventpolling/LocalNetEventHandler.h       | 4 +++-
+ .../server/connectivity/LocalNetEventListener.java       | 3 ++-
+ 3 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/service/native/libs/libeventpolling/LocalNetEventHandler.cpp b/service/native/libs/libeventpolling/LocalNetEventHandler.cpp
+index 59c2844..7e0eb9f 100644
+--- a/service/native/libs/libeventpolling/LocalNetEventHandler.cpp
++++ b/service/native/libs/libeventpolling/LocalNetEventHandler.cpp
+@@ -18,6 +18,7 @@
+ #include "libeventpolling/LocalNetEventHandler.h"
+ 
+ #include <memory>
++#include <unistd.h>
+ #include <vector>
+ 
+ #include <bpf/BpfRingbuf.h>
+@@ -36,6 +37,13 @@ using bpf::RingbufEventPoller;
+ LocalNetEventHandler::LocalNetEventRingbuf *LocalNetEventHandler::GetRingbuf() {
+     static LocalNetEventRingbuf *const sRingbuf =
+         []() -> LocalNetEventRingbuf * {
++        // BPF ring buffers need kernel 5.8+. On legacy kernels the map is
++        // never created; the BpfRingbuf constructor would abort.
++        if (access(LOCAL_NET_NOTE_OP_RINGBUF_PATH, F_OK) != 0) {
++            ALOGW("%s not available, local net events disabled",
++                  LOCAL_NET_NOTE_OP_RINGBUF_PATH);
++            return nullptr;
++        }
+         auto rb = std::make_unique<LocalNetEventRingbuf>(
+             LOCAL_NET_NOTE_OP_RINGBUF_PATH);
+         return rb.release();
+@@ -46,6 +54,7 @@ LocalNetEventHandler::LocalNetEventRingbuf *LocalNetEventHandler::GetRingbuf() {
+ // static
+ std::vector<uint32_t> LocalNetEventHandler::ConsumeAll() {
+     std::vector<uint32_t> uids_pids;
++    if (!GetRingbuf()) return uids_pids;
+     base::Result<int> ret =
+         GetRingbuf()->ConsumeAll([&](const LocalNetNoteOp &event) {
+             uids_pids.push_back(event.uid);
+diff --git a/service/native/libs/libeventpolling/include/libeventpolling/LocalNetEventHandler.h b/service/native/libs/libeventpolling/include/libeventpolling/LocalNetEventHandler.h
+index ce46620..822f246 100644
+--- a/service/native/libs/libeventpolling/include/libeventpolling/LocalNetEventHandler.h
++++ b/service/native/libs/libeventpolling/include/libeventpolling/LocalNetEventHandler.h
+@@ -36,7 +36,9 @@ class LocalNetEventHandler {
+     // Returns a duplicate of the ring buffer file descriptor. This is needed so
+     // we can pass the file descriptor via jni for use in polling in java.
+     static android::base::unique_fd GetNewRingbufFd() {
+-        return GetRingbuf()->GetDuplicateFd();
++        LocalNetEventRingbuf *rb = GetRingbuf();
++        if (!rb) return android::base::unique_fd();
++        return rb->GetDuplicateFd();
+     }
+ 
+     // Consumes all available events in the ring buffer. Returns a list of
+diff --git a/service/src/com/android/server/connectivity/LocalNetEventListener.java b/service/src/com/android/server/connectivity/LocalNetEventListener.java
+index e8d495c..23db77f 100644
+--- a/service/src/com/android/server/connectivity/LocalNetEventListener.java
++++ b/service/src/com/android/server/connectivity/LocalNetEventListener.java
+@@ -98,7 +98,8 @@ public class LocalNetEventListener {
+         if (mStarted) {
+             return;
+         }
+-        if (mMetricsEnabled || mNoteOpsEnabled) {
++        // mRingbufFd is null on kernels without BPF ring buffer support.
++        if ((mMetricsEnabled || mNoteOpsEnabled) && mRingbufFd != null) {
+             mLooper.getQueue().addOnFileDescriptorEventListener(mRingbufFd,
+                     EVENT_INPUT | EVENT_ERROR, this::consumeEvents);
+         }

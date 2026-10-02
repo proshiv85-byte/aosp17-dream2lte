@@ -1,0 +1,40 @@
+From df9a4d68dd794ad38ea29c45d608e76ac76e46ff Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <248141944+proshiv85-byte@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 09:17:51 +0300
+Subject: [PATCH 5/5] LoopbackEventHandler: tolerate missing BPF ring buffer
+
+Same as LocalNetEventListener: on kernels without BPF ring buffers the
+loopback access ring buffer does not exist; don't abort system_server.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I23ab1645dd75c55c7496a5d76f1cf1699ca42659
+---
+ .../native/libs/libeventpolling/LoopbackEventHandler.cpp  | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/service/native/libs/libeventpolling/LoopbackEventHandler.cpp b/service/native/libs/libeventpolling/LoopbackEventHandler.cpp
+index 942bbf6..1f623c9 100644
+--- a/service/native/libs/libeventpolling/LoopbackEventHandler.cpp
++++ b/service/native/libs/libeventpolling/LoopbackEventHandler.cpp
+@@ -15,6 +15,7 @@
+  */
+ #define LOG_TAG "LoopbackEventHandler"
+ 
++#include <unistd.h>
+ #include "libeventpolling/LoopbackEventHandler.h"
+ 
+ #include <memory>
+@@ -53,6 +54,13 @@ bpf::RingbufEventPoller<LoopbackAccessEvent> *
+ LoopbackEventHandler::GetPoller() {
+     static bpf::RingbufEventPoller<LoopbackAccessEvent> *const sPoller =
+         []() -> bpf::RingbufEventPoller<LoopbackAccessEvent> * {
++        // BPF ring buffers need kernel 5.8+. On legacy kernels the map is
++        // never created; the BpfRingbuf constructor would abort.
++        if (access(LOOPBACK_ACCESS_RINGBUF_NETD_PATH, F_OK) != 0) {
++            ALOGW("%s not available, loopback events disabled",
++                  LOOPBACK_ACCESS_RINGBUF_NETD_PATH);
++            return nullptr;
++        }
+         auto rb = std::make_unique<BpfRingbuf<LoopbackAccessEvent>>(
+             LOOPBACK_ACCESS_RINGBUF_NETD_PATH);
+ 

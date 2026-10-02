@@ -1,0 +1,48 @@
+From 74970d636a5e749d89d54c43b3050fc185ac9773 Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <248141944+proshiv85-byte@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 00:19:04 +0300
+Subject: [PATCH 1/2] libui: Restore support for gralloc 2/3
+
+Based on LineageOS commit c7d417fbe1ec (ported to AOSP 17's Android.bp).
+Devices with mapper 2.0/3.0 blobs set the libui legacy_gralloc soong
+config variable.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I25df914e2f7d359f1f35d476c38200b23414b2e5
+---
+ libs/ui/Android.bp              | 5 ++++-
+ libs/ui/GraphicBufferMapper.cpp | 4 ++++
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/libs/ui/Android.bp b/libs/ui/Android.bp
+index bf298fa..c0c4ac2 100644
+--- a/libs/ui/Android.bp
++++ b/libs/ui/Android.bp
+@@ -130,7 +130,10 @@ cc_library_shared {
+     cflags: [
+         "-Wall",
+         "-Werror",
+-    ],
++    ] + select(soong_config_variable("libui", "legacy_gralloc"), {
++        true: ["-DLEGACY_GRALLOC"],
++        default: [],
++    }),
+     cppflags: [
+         "-Wextra",
+     ],
+diff --git a/libs/ui/GraphicBufferMapper.cpp b/libs/ui/GraphicBufferMapper.cpp
+index 91c760e..37a94bb 100644
+--- a/libs/ui/GraphicBufferMapper.cpp
++++ b/libs/ui/GraphicBufferMapper.cpp
+@@ -54,7 +54,11 @@ using LockResult = GraphicBufferMapper::LockResult;
+ ANDROID_SINGLETON_STATIC_INSTANCE( GraphicBufferMapper )
+ 
+ static bool requireMapper4() {
++#ifdef LEGACY_GRALLOC
++    return false;
++#else
+     return android_get_device_api_level() >= 36 && flags::require_gralloc4_or_newer();
++#endif
+ }
+ 
+ void GraphicBufferMapper::preloadHal() {

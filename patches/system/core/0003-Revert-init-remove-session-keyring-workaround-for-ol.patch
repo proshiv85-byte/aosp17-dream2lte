@@ -1,0 +1,126 @@
+From 1f127e799479e572e80b0485eaba655b0aec8d20 Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <248141944+proshiv85-byte@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 16:54:12 +0300
+Subject: [PATCH 3/3] Revert "init: remove session keyring workaround for old
+ kernels"
+
+Based on LineageOS commit 97da59b5a5ef, ported to Android 17.
+Needed for kernels without FS_IOC_ADD_ENCRYPTION_KEY (fscrypt v1 only).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: Idcff8546c4ce602431a89e9665188e2ada228d8a
+---
+ init/Android.bp                  |  1 +
+ init/builtins.cpp                |  3 +++
+ init/fscrypt_init_extensions.cpp | 16 ++++++++++++++++
+ init/fscrypt_init_extensions.h   |  1 +
+ init/fuzzer/Android.bp           |  1 +
+ init/init.cpp                    |  6 ++++++
+ 6 files changed, 28 insertions(+)
+
+diff --git a/init/Android.bp b/init/Android.bp
+index 2783c9b..8b0340e 100644
+--- a/init/Android.bp
++++ b/init/Android.bp
+@@ -205,6 +205,7 @@ libinit_cc_defaults {
+         "libext4_utils",
+         "libfs_mgr",
+         "libgsi",
++        "libkeyutils",
+         "liblog",
+         "liblogwrap",
+         "liblp",
+diff --git a/init/builtins.cpp b/init/builtins.cpp
+index 2e4a3b4..8f34ce3 100644
+--- a/init/builtins.cpp
++++ b/init/builtins.cpp
+@@ -594,6 +594,9 @@ static Result<void> queue_fs_event(int code) {
+     } else if (code == FS_MGR_MNTALL_DEV_FILE_ENCRYPTED ||
+                code == FS_MGR_MNTALL_DEV_IS_METADATA_ENCRYPTED ||
+                code == FS_MGR_MNTALL_DEV_NEEDS_METADATA_ENCRYPTION) {
++        if (!FscryptInstallKeyring()) {
++            return Error() << "FscryptInstallKeyring() failed";
++        }
+         SetProperty("ro.crypto.state", "encrypted");
+ 
+         // Although encrypted, vold has already set the device up, so we do not need to
+diff --git a/init/fscrypt_init_extensions.cpp b/init/fscrypt_init_extensions.cpp
+index 6a561e5..fbd8189 100644
+--- a/init/fscrypt_init_extensions.cpp
++++ b/init/fscrypt_init_extensions.cpp
+@@ -34,12 +34,28 @@
+ #include <cutils/properties.h>
+ #include <cutils/sockets.h>
+ #include <fscrypt/fscrypt.h>
++#include <keyutils.h>
+ #include <logwrap/logwrap.h>
+ 
+ #define TAG "fscrypt"
+ 
+ using namespace android::fscrypt;
+ 
++bool FscryptInstallKeyring() {
++    if (keyctl_search(KEY_SPEC_SESSION_KEYRING, "keyring", "fscrypt", 0) != -1) {
++        LOG(INFO) << "Keyring is already created";
++        return true;
++    }
++    key_serial_t device_keyring = add_key("keyring", "fscrypt", 0, 0, KEY_SPEC_SESSION_KEYRING);
++
++    if (device_keyring == -1) {
++        PLOG(ERROR) << "Failed to create keyring";
++        return false;
++    }
++    LOG(INFO) << "Keyring created with id " << device_keyring << " in process " << getpid();
++    return true;
++}
++
+ // TODO(b/139378601): use a single central implementation of this.
+ static void delete_dir_contents(const std::string& dir) {
+     char* const paths[2] = {const_cast<char*>(dir.c_str()), nullptr};
+diff --git a/init/fscrypt_init_extensions.h b/init/fscrypt_init_extensions.h
+index 5e0269a..d357bb2 100644
+--- a/init/fscrypt_init_extensions.h
++++ b/init/fscrypt_init_extensions.h
+@@ -25,5 +25,6 @@ enum class FscryptAction {
+     kDeleteIfNecessary,
+ };
+ 
++bool FscryptInstallKeyring();
+ bool FscryptSetDirectoryPolicy(const std::string& ref_basename, FscryptAction action,
+                                const std::string& dir);
+diff --git a/init/fuzzer/Android.bp b/init/fuzzer/Android.bp
+index 355c8d8..882b1f5 100644
+--- a/init/fuzzer/Android.bp
++++ b/init/fuzzer/Android.bp
+@@ -30,6 +30,7 @@ cc_defaults {
+     shared_libs: [
+         "libbase",
+         "libfs_mgr",
++        "libkeyutils",
+         "liblog",
+         "libprocessgroup",
+         "libselinux",
+diff --git a/init/init.cpp b/init/init.cpp
+index aec2688..34174e5 100644
+--- a/init/init.cpp
++++ b/init/init.cpp
+@@ -54,6 +54,7 @@
+ #include <com_android_apex_flags.h>
+ #include <fs_avb/fs_avb.h>
+ #include <fs_mgr_vendor_overlay.h>
++#include <keyutils.h>
+ #include <libavb/libavb.h>
+ #include <libdm/loop_control.h>
+ #include <libgsi/libgsi.h>
+@@ -1106,6 +1107,11 @@ int SecondStageMain(int argc, char** argv) {
+                    << " to /proc/1/oom_score_adj: " << result.error();
+     }
+ 
++    // Set up a session keyring that all processes will have access to. It
++    // will hold things like FBE encryption keys. No process should override
++    // its session keyring.
++    keyctl_get_keyring_ID(KEY_SPEC_SESSION_KEYRING, 1);
++
+     // Indicate that booting is in progress to background fw loaders, etc.
+     close(open("/dev/.booting", O_WRONLY | O_CREAT | O_CLOEXEC, 0000));
+ 

@@ -1,0 +1,40 @@
+From b476287ab1f6d83a6cb3a2748cf050211cdfdbd7 Mon Sep 17 00:00:00 2001
+From: Michael Bestas <mkbestas@lineageos.org>
+Date: Mon, 7 Jul 2025 11:04:17 +0300
+Subject: [PATCH 1/5] bpf: Allow overriding kernel version
+
+This allows devices pretend they are on a different kernel version in
+order to support different bpf features in case kernel backports are in
+place.
+
+Test: set ro.bpf.kver_override=5.4.186 in product.prop on sm8150 device
+      based on 4.14 kernel with 5.4 bpf backported, boot
+Change-Id: I50357ee832b01b11e499278244f77244c904e3e9
+---
+ bpf/headers/include/bpf/KernelUtils.h | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/bpf/headers/include/bpf/KernelUtils.h b/bpf/headers/include/bpf/KernelUtils.h
+index add20c5..1ee34f0 100644
+--- a/bpf/headers/include/bpf/KernelUtils.h
++++ b/bpf/headers/include/bpf/KernelUtils.h
+@@ -20,6 +20,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/personality.h>
++#include <sys/system_properties.h>
+ #include <sys/utsname.h>
+ 
+ namespace android {
+@@ -34,7 +35,10 @@ static inline unsigned uncachedKernelVersion() {
+     unsigned kver_major = 0;
+     unsigned kver_minor = 0;
+     unsigned kver_sub = 0;
+-    if (sscanf(buf.release, "%u.%u.%u", &kver_major, &kver_minor, &kver_sub) < 2) abort();
++    char kver_override[PROP_VALUE_MAX];
++    int kver_override_len = __system_property_get("ro.bpf.kver_override", kver_override);
++    if (sscanf(kver_override_len > 0 ? kver_override : buf.release, "%u.%u.%u",
++               &kver_major, &kver_minor, &kver_sub) < 2) abort();
+     return KVER(kver_major, kver_minor, kver_sub);
+ }
+ 

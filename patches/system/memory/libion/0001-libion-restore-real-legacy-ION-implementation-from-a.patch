@@ -1,0 +1,292 @@
+From f864279b92911a08c75bd1403dd4e125a832a181 Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <248141944+proshiv85-byte@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 10:17:35 +0300
+Subject: [PATCH] libion: restore real legacy ION implementation (from
+ android-14.0.0_r1)
+
+Android 17 turned libion into stubs that always fail. Vendor blobs on
+legacy-ION devices (e.g. the Exynos 8895 camera HAL) allocate buffers via
+ion_alloc_fd() and crash when it fails.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I84a5232334b488c9de8fcdd40eb9d0529f36611e
+---
+ Android.bp |   1 +
+ ion.c      | 241 +++++++++++++++++++++++++++++++++++++++++++++--------
+ 2 files changed, 209 insertions(+), 33 deletions(-)
+
+diff --git a/Android.bp b/Android.bp
+index 78b8bda..7562d55 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -30,6 +30,7 @@ cc_library {
+     defaults: ["libion_defaults"],
+     double_loadable: true,
+     srcs: ["ion.c"],
++    shared_libs: ["liblog"],
+     header_libs: ["libion_headers"],
+     export_header_lib_headers: ["libion_headers"],
+     cflags: ["-Werror"],
+diff --git a/ion.c b/ion.c
+index ce3d7a4..cce583a 100644
+--- a/ion.c
++++ b/ion.c
+@@ -17,50 +17,225 @@
+  *  See the License for the specific language governing permissions and
+  *  limitations under the License.
+  */
++#define LOG_TAG "ion"
++
++#include <errno.h>
++#include <fcntl.h>
++#include <linux/ion.h>
++#include <stdatomic.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/ioctl.h>
++#include <sys/mman.h>
++#include <sys/types.h>
++#include <unistd.h>
++
+ #include <ion/ion.h>
++#include <linux/ion_4.19.h>
++
++#include <log/log.h>
++
++#define ION_ABI_VERSION_MODULAR_HEAPS 2
++
++enum ion_version { ION_VERSION_UNKNOWN, ION_VERSION_MODERN, ION_VERSION_LEGACY };
++
++static atomic_int g_ion_version = ATOMIC_VAR_INIT(ION_VERSION_UNKNOWN);
++
++int ion_is_legacy(int fd) {
++    int version = atomic_load_explicit(&g_ion_version, memory_order_acquire);
++    if (version == ION_VERSION_UNKNOWN) {
++        /**
++          * Check for FREE IOCTL here; it is available only in the old
++          * kernels, not the new ones.
++          */
++        int err = ion_free(fd, (ion_user_handle_t)0);
++        version = (err == -ENOTTY) ? ION_VERSION_MODERN : ION_VERSION_LEGACY;
++        atomic_store_explicit(&g_ion_version, version, memory_order_release);
++    }
++    return version == ION_VERSION_LEGACY;
++}
++
++int ion_open() {
++    int fd = open("/dev/ion", O_RDONLY | O_CLOEXEC);
++    if (fd < 0) ALOGE("open /dev/ion failed: %s", strerror(errno));
++
++    return fd;
++}
++
++int ion_close(int fd) {
++    int ret = close(fd);
++    if (ret < 0) return -errno;
++    return ret;
++}
++
++static int ion_ioctl(int fd, int req, void* arg) {
++    int ret = ioctl(fd, req, arg);
++    if (ret < 0) {
++	/*
++	 * To avoid confusion, do not print an error log if the error came from
++	 * issuing an unimplemented IOCTL. Various versions of ION do not
++	 * support several IOCTLs and they are issued to check which ION version
++	 * the device supports.
++	 */
++	if (errno != ENOTTY)
++		ALOGE("ioctl %x failed with code %d: %s", req, ret, strerror(errno));
++        return -errno;
++    }
++    return ret;
++}
++
++int ion_is_using_modular_heaps(int fd) {
++    int ion_abi_version = 0;
++    int ret = 0;
++
++    ret = ion_ioctl(fd, ION_IOC_ABI_VERSION, &ion_abi_version);
++    return (ret == 0 && ion_abi_version >= ION_ABI_VERSION_MODULAR_HEAPS);
++}
++
++int ion_alloc(int fd, size_t len, size_t align, unsigned int heap_mask, unsigned int flags,
++              ion_user_handle_t* handle) {
++    int ret = 0;
++
++    if ((handle == NULL) || (!ion_is_legacy(fd))) return -EINVAL;
++
++    struct ion_allocation_data data = {
++        .len = len, .align = align, .heap_id_mask = heap_mask, .flags = flags,
++    };
++
++    ret = ion_ioctl(fd, ION_IOC_ALLOC, &data);
++    if (ret < 0) return ret;
++
++    *handle = data.handle;
++
++    return ret;
++}
++
++int ion_free(int fd, ion_user_handle_t handle) {
++    struct ion_handle_data data = {
++        .handle = handle,
++    };
++    return ion_ioctl(fd, ION_IOC_FREE, &data);
++}
++
++int ion_map(int fd, ion_user_handle_t handle, size_t length, int prot, int flags, off_t offset,
++            unsigned char** ptr, int* map_fd) {
++    if (!ion_is_legacy(fd)) return -EINVAL;
++    int ret;
++    unsigned char* tmp_ptr;
++    struct ion_fd_data data = {
++        .handle = handle,
++    };
++
++    if (map_fd == NULL) return -EINVAL;
++    if (ptr == NULL) return -EINVAL;
++
++    ret = ion_ioctl(fd, ION_IOC_MAP, &data);
++    if (ret < 0) return ret;
++    if (data.fd < 0) {
++        ALOGE("map ioctl returned negative fd");
++        return -EINVAL;
++    }
++    tmp_ptr = mmap(NULL, length, prot, flags, data.fd, offset);
++    if (tmp_ptr == MAP_FAILED) {
++        ALOGE("mmap failed: %s", strerror(errno));
++        return -errno;
++    }
++    *map_fd = data.fd;
++    *ptr = tmp_ptr;
++    return ret;
++}
++
++int ion_share(int fd, ion_user_handle_t handle, int* share_fd) {
++    int ret;
++    struct ion_fd_data data = {
++        .handle = handle,
++    };
++
++    if (!ion_is_legacy(fd)) return -EINVAL;
++    if (share_fd == NULL) return -EINVAL;
++
++    ret = ion_ioctl(fd, ION_IOC_SHARE, &data);
++    if (ret < 0) return ret;
++    if (data.fd < 0) {
++        ALOGE("share ioctl returned negative fd");
++        return -EINVAL;
++    }
++    *share_fd = data.fd;
++    return ret;
++}
++
++int ion_alloc_fd(int fd, size_t len, size_t align, unsigned int heap_mask, unsigned int flags,
++                 int* handle_fd) {
++    ion_user_handle_t handle;
++    int ret;
++
++    if (!handle_fd) return -EINVAL;
++
++    if (!ion_is_legacy(fd)) {
++        struct ion_new_allocation_data data = {
++            .len = len,
++            .heap_id_mask = heap_mask,
++            .flags = flags,
++        };
++
++        ret = ion_ioctl(fd, ION_IOC_NEW_ALLOC, &data);
++        if (ret < 0) return ret;
++        *handle_fd = data.fd;
++    } else {
++        ret = ion_alloc(fd, len, align, heap_mask, flags, &handle);
++        if (ret < 0) return ret;
++        ret = ion_share(fd, handle, handle_fd);
++        ion_free(fd, handle);
++    }
++    return ret;
++}
+ 
+-int ion_open()
+-{ return -1; }
++int ion_import(int fd, int share_fd, ion_user_handle_t* handle) {
++    int ret;
++    struct ion_fd_data data = {
++        .fd = share_fd,
++    };
+ 
+-int ion_close(int)
+-{ return -1; }
++    if (!ion_is_legacy(fd)) return -EINVAL;
+ 
+-int ion_alloc(int, size_t, size_t, unsigned int,
+-              unsigned int, ion_user_handle_t *)
+-{ return -1; }
++    if (handle == NULL) return -EINVAL;
+ 
+-int ion_alloc_fd(int, size_t, size_t, unsigned int,
+-              unsigned int, int *)
+-{ return -1; }
++    ret = ion_ioctl(fd, ION_IOC_IMPORT, &data);
++    if (ret < 0) return ret;
++    *handle = data.handle;
++    return ret;
++}
+ 
+-int ion_sync_fd(int, int)
+-{ return -1; }
++int ion_sync_fd(int fd, int handle_fd) {
++    struct ion_fd_data data = {
++        .fd = handle_fd,
++    };
+ 
+-int ion_free(int, ion_user_handle_t)
+-{ return -1; }
++    if (!ion_is_legacy(fd)) return -EINVAL;
+ 
+-int ion_map(int, ion_user_handle_t, size_t, int,
+-            int, off_t, unsigned char **, int *)
+-{ return -1; }
++    return ion_ioctl(fd, ION_IOC_SYNC, &data);
++}
+ 
+-int ion_share(int, ion_user_handle_t, int *)
+-{ return -1; }
++int ion_query_heap_cnt(int fd, int* cnt) {
++    int ret;
++    struct ion_heap_query query;
+ 
+-int ion_import(int, int, ion_user_handle_t *)
+-{ return -1; }
++    if (!cnt) return -EINVAL;
++    memset(&query, 0, sizeof(query));
+ 
+-/**
+-  * Add 4.12+ kernel ION interfaces here for forward compatibility
+-  * This should be needed till the pre-4.12+ ION interfaces are backported.
+-  */
+-int ion_query_heap_cnt(int, int*)
+-{ return -1; }
++    ret = ion_ioctl(fd, ION_IOC_HEAP_QUERY, &query);
++    if (ret < 0) return ret;
+ 
+-int ion_query_get_heaps(int, int, void*)
+-{ return -1; }
++    *cnt = query.cnt;
++    return ret;
++}
+ 
+-int ion_is_legacy(int)
+-{ return 0; }
++int ion_query_get_heaps(int fd, int cnt, void* buffers) {
++    int ret;
++    struct ion_heap_query query = {
++        .cnt = cnt, .heaps = (uintptr_t)buffers,
++    };
+ 
+-int ion_is_using_modular_heaps(int)
+-{ return 0; }
++    ret = ion_ioctl(fd, ION_IOC_HEAP_QUERY, &query);
++    return ret;
++}

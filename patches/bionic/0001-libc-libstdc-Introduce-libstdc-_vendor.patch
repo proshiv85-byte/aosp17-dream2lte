@@ -1,0 +1,53 @@
+From 455aef7fc0f6a0a6c1fa8f426c3ac0fe31cd4f59 Mon Sep 17 00:00:00 2001
+From: me-cafebabe <me.cafebabe@gmail.com>
+Date: Thu, 5 Oct 2023 19:38:27 +0000
+Subject: [PATCH] libc: libstdc++: Introduce libstdc++_vendor
+
+A lot of blobs still link to libstdc++.so even after 8.1, so allow
+devices to build a vendor copy of it.
+
+Adding vendor_available to libstdc++ is not an option after Android 14,
+since libstdc++ then gets listed on /vendor/etc/linker.config.pb,
+which is duplicated with /system/etc/linker.config.pb and as a result
+linkerconfig fails and stops the entire system from booting.
+
+[    5.840677] DEBUG: Abort message: 'duplicate: libstdc++.so is provided by default and system in [vendor]'
+
+Change-Id: Ib6eee48de87100c2fb0dd765d57ee95d3159c4ef
+---
+ libc/Android.bp | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/libc/Android.bp b/libc/Android.bp
+index 3c56ed7..73cda9a 100644
+--- a/libc/Android.bp
++++ b/libc/Android.bp
+@@ -1970,8 +1970,8 @@ cc_library_headers {
+ // libstdc++.so and libstdc++.a.
+ // ========================================================
+ 
+-cc_library {
+-    name: "libstdc++",
++cc_defaults {
++    name: "libstdc++_defaults",
+     defaults: [
+         "libc_defaults",
+         "bug_24465209_workaround",
+@@ -2018,6 +2018,17 @@ cc_library {
+     },
+ }
+ 
++cc_library {
++    name: "libstdc++",
++    defaults: ["libstdc++_defaults"],
++}
++
++cc_library_shared {
++    name: "libstdc++_vendor",
++    defaults: ["libstdc++_defaults"],
++    soc_specific: true,
++}
++
+ genrule {
+     name: "libstdc++.arm.map",
+     out: ["libstdc++.arm.map.txt"],

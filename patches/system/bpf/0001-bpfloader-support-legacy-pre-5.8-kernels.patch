@@ -1,0 +1,51 @@
+From c8609c624733ced92984e21cafbd8f6b1c3c5e2c Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <248141944+proshiv85-byte@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 16:51:47 +0300
+Subject: [PATCH] bpfloader: support legacy (pre-5.8) kernels
+
+- Allow overriding the detected kernel version with ro.bpf.kver_override
+  (from LineageOS).
+- Gate the critical ring buffer self-test on kernel 5.8+ so it is skipped
+  instead of panicking the loader on older kernels.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: Ie5a1560e94524afb877f873604b77db48d63dcf5
+---
+ loader/bpfloader.rs | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/loader/bpfloader.rs b/loader/bpfloader.rs
+index 1292c31..d3ec261 100644
+--- a/loader/bpfloader.rs
++++ b/loader/bpfloader.rs
+@@ -49,6 +49,7 @@ const fn kver(a: u32, b: u32, c: u32) -> u32 {
+ }
+ 
+ const KVER_NONE: u32 = kver(0, 0, 0);
++const KVER_5_8: u32 = kver(5, 8, 0);
+ const KVER_6_1: u32 = kver(6, 1, 0);
+ const KVER_INF: u32 = 0xFFFFFFFF;
+ 
+@@ -332,8 +333,9 @@ const FILE_ARR: &[BpfFileDesc] = &[
+         filename: "/system/etc/bpf/bpfRingbufProg.bpf",
+         critical: true,
+         skip_on_user: true,
+-        maps: &[MapDesc::new(GID_ROOT, PERM_GRW, "test_ringbuf")],
+-        progs: &[ProgDesc::new(GID_ROOT, "skfilter_ringbuf_test")],
++        // BPF ring buffers need kernel 5.8+; skip them on older (legacy) kernels.
++        maps: &[MapDesc::new_kver(GID_ROOT, PERM_GRW, KVER_5_8, "test_ringbuf")],
++        progs: &[ProgDesc::new_kver(GID_ROOT, KVER_5_8, "skfilter_ringbuf_test")],
+         ..BPF_FILE_DESC_DEFAULT
+     },
+ ];
+@@ -486,6 +488,10 @@ fn parse_release(release: &str) -> (u32, u32, u32) {
+ }
+ 
+ fn kernel_version() -> Result<u32, anyhow::Error> {
++    if let Some(kver_override) = system_properties::read("ro.bpf.kver_override")? {
++        let (major, minor, sub) = parse_release(&kver_override);
++        return Ok(kver(major, minor, sub));
++    }
+     let mut buf: MaybeUninit<utsname> = MaybeUninit::zeroed();
+     // SAFETY: If uname returns 0, the buf should be properly initialized.
+     if unsafe { uname(buf.as_mut_ptr()) } != 0 {

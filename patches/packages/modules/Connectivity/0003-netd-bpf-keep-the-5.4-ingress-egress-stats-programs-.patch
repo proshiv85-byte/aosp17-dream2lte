@@ -1,0 +1,46 @@
+From 8fb33d511f60691958a39059f32d0cdfd5f3f9b0 Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <248141944+proshiv85-byte@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 00:16:40 +0300
+Subject: [PATCH 3/5] netd bpf: keep the 5.4 ingress/egress stats programs on
+ 26Q2+
+
+Android 26Q2 has no cgroupskb stats program variant for 5.4 kernels, so on
+legacy kernels with 5.4 bpf backports (ro.bpf.kver_override=5.4.x) the
+programs were skipped and netd1shot aborted when attaching them.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: Iee5b5cb6a00a7369de19028ddbbe81f5a602db98
+---
+ bpf/progs/netd.c | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/bpf/progs/netd.c b/bpf/progs/netd.c
+index 05bdb33..fbd6444 100644
+--- a/bpf/progs/netd.c
++++ b/bpf/progs/netd.c
+@@ -986,8 +986,10 @@ DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 5_10, INF, 25Q2, 25Q4)
+     return bpf_traffic_account(skb, INGRESS, KVER_5_10, API(25Q2));
+ }
+ 
+-// Android 25Q2/25Q3 5.4 (localnet protection)
+-DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 5_4, 5_10, 25Q2, 25Q4)
++// Android 25Q2+ 5.4 (localnet protection)
++// Extended to all later platform versions for legacy kernels with 5.4 bpf
++// backports (ro.bpf.kver_override=5.4.x); 26Q2+ otherwise requires 5.10.
++DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 5_4, 5_10, 25Q2, MAXAPI)
+ (struct __sk_buff* skb) {
+     return bpf_traffic_account(skb, INGRESS, KVER_5_4, API(25Q2));
+ }
+@@ -1042,8 +1044,10 @@ DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 5_10, INF, 25Q2, 25Q4)
+     return bpf_traffic_account(skb, EGRESS, KVER_5_10, API(25Q2));
+ }
+ 
+-// Android 25Q2/25Q3 5.4 (localnet protection)
+-DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 5_4, 5_10, 25Q2, 25Q4)
++// Android 25Q2+ 5.4 (localnet protection)
++// Extended to all later platform versions for legacy kernels with 5.4 bpf
++// backports (ro.bpf.kver_override=5.4.x); 26Q2+ otherwise requires 5.10.
++DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 5_4, 5_10, 25Q2, MAXAPI)
+ (struct __sk_buff* skb) {
+     return bpf_traffic_account(skb, EGRESS, KVER_5_4, API(25Q2));
+ }

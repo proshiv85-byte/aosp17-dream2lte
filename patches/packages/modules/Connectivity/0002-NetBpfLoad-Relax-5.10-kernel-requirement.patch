@@ -1,0 +1,28 @@
+From a673a8efa51151a9c48ad50513738cd588642502 Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <248141944+proshiv85-byte@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 17:12:02 +0300
+Subject: [PATCH 2/5] NetBpfLoad: Relax 5.10 kernel requirement
+
+5.4 (or a 4.x kernel with 5.4 bpf backports, see ro.bpf.kver_override)
+still works, so allow it. Based on LineageOS commit 8e92e094e9.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I529278d8cacc1471184de7e0cf61381c8341191f
+---
+ bpf/loader/NetBpfLoad.cpp | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
+index 7ba3247..d4853ba 100644
+--- a/bpf/loader/NetBpfLoad.cpp
++++ b/bpf/loader/NetBpfLoad.cpp
+@@ -1576,8 +1576,7 @@ static int doLoad(char** argv, char * const envp[]) {
+     // 25Q4 bumps the kernel requirement up to 5.10
+     // see also: //system/netd/tests/kernel_test.cpp TestKernel510
+     if (isAtLeast25Q4 && !isAtLeastKernelVersion(5, 10)) {
+-        ALOGE("Android 25Q4 requires kernel 5.10.");
+-        return 7;
++        ALOGW("Android 25Q4 requires kernel 5.10.");
+     }
+ 
+     // 26Q4 bumps the kernel requirement up to 5.15
