@@ -73,6 +73,22 @@ appended (S-Boot needs it). To rebuild the kernel, see `build-kernel.sh` in
 
 ## Installing
 
+### From a release zip (easiest)
+
+Download the zip from [Releases](https://github.com/proshiv85-byte/aosp17-dream2lte/releases)
+and flash it in TWRP (Install). It writes BOOT, SYSTEM and VENDOR and
+verifies each one. Your data is not touched:
+
+- Coming from another ROM: after flashing, Wipe → Format Data (type `yes`),
+  then reboot.
+- Updating this ROM: flash and reboot; apps and data stay.
+
+The same requirements as below apply (SM-G955F, TWRP, Treble layout with a
+`VENDOR` partition). To make the zip yourself after a build:
+`twrp/make-twrp-zip.sh /path/to/aosp`.
+
+### Manual flashing
+
 **This wipes the phone.** Back up your EFS partition (IMEI and radio
 calibration) first and keep that backup private.
 

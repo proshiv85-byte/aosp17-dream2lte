@@ -1,0 +1,97 @@
+#!/sbin/sh
+#
+# TWRP installer for AOSP 17 on the Galaxy S8+ Exynos (SM-G955F, dream2lte).
+#
+# Writes BOOT, SYSTEM and VENDOR from the images in this zip and verifies
+# every partition against SHA256SUMS. Does not touch /data: format it in
+# TWRP when coming from another ROM.
+
+OUTFD=/proc/self/fd/$2
+ZIP=$3
+TMP=/tmp/aosp17-dream2lte
+
+ui_print() { echo -e "ui_print $*\nui_print" >> "$OUTFD"; }
+progress() { echo "set_progress $1" >> "$OUTFD"; }
+abort() { ui_print "ERROR: $*"; ui_print "Nothing was written." ; rm -rf "$TMP"; exit 1; }
+fail() { ui_print "ERROR: $*"; ui_print "The phone will not boot until a ROM is flashed successfully."; rm -rf "$TMP"; exit 1; }
+
+ui_print " "
+ui_print "AOSP 17 for Galaxy S8+ Exynos (dream2lte)"
+ui_print "Build: @BUILD_ID@"
+ui_print " "
+
+# --- Checks (nothing is written before all of them pass) ---------------------
+
+bl=$(getprop ro.boot.bootloader)
+case "$bl" in
+    G955F*) ;;
+    *) abort "this zip is only for the SM-G955F (bootloader: '${bl:-unknown}')" ;;
+esac
+
+part() { readlink -f "/dev/block/by-name/$1"; }
+BOOT=$(part BOOT); SYSTEM=$(part SYSTEM); VENDOR=$(part VENDOR)
+for p in "$BOOT" "$SYSTEM" "$VENDOR"; do
+    [ -b "$p" ] || abort "partition $p not found"
+done
+[ -b /dev/block/by-name/VENDOR ] ||
+    abort "no VENDOR partition: a Treble partition layout (e.g. HadesROM's) is needed"
+
+rm -rf "$TMP"; mkdir -p "$TMP"
+unzip -o -q "$ZIP" SHA256SUMS sparse_write -d "$TMP" || abort "cannot extract from zip"
+chmod 755 "$TMP/sparse_write"
+
+# SHA256SUMS lines: <sha256 of the raw partition contents> <file> <raw size>
+field() { while read -r s f z; do [ "$f" = "$1" ] && { [ "$2" = sum ] && echo "$s" || echo "$z"; }; done < "$TMP/SHA256SUMS"; }
+size_of() { field "$1" size; }
+sum_of() { field "$1" sum; }
+check_fits() {
+    have=$(blockdev --getsize64 "$2")
+    need=$(size_of "$1")
+    [ -n "$need" ] && [ "$have" -ge "$need" ] ||
+        abort "$1 needs $need bytes but $2 has $have"
+}
+check_fits boot.img "$BOOT"
+check_fits system.img "$SYSTEM"
+check_fits vendor.img "$VENDOR"
+
+for m in /system_root /system /vendor; do umount "$m" 2>/dev/null; done
+for p in "$SYSTEM" "$VENDOR"; do
+    grep -q "^$p " /proc/mounts && abort "$p is still mounted; unmount it in TWRP (Mount menu)"
+done
+
+verify() {  # name device
+    want=$(sum_of "$1")
+    got=$(head -c "$(size_of "$1")" "$2" | sha256sum | cut -d' ' -f1)
+    [ "$got" = "$want" ] || fail "$1 verification failed on $2"
+    ui_print "  verified"
+}
+
+# --- Flash -------------------------------------------------------------------
+
+ui_print "Flashing boot..."
+unzip -p "$ZIP" boot.img > "$BOOT" || fail "writing boot failed"
+sync
+verify boot.img "$BOOT"
+progress 0.05
+
+ui_print "Flashing vendor..."
+unzip -p "$ZIP" vendor.img | "$TMP/sparse_write" "$VENDOR" 2>/dev/null || fail "writing vendor failed"
+verify vendor.img "$VENDOR"
+progress 0.2
+
+ui_print "Flashing system (takes a few minutes)..."
+unzip -p "$ZIP" system.img | "$TMP/sparse_write" "$SYSTEM" 2>/dev/null || fail "writing system failed"
+progress 0.8
+ui_print "Verifying system..."
+verify system.img "$SYSTEM"
+progress 1.0
+
+rm -rf "$TMP"
+ui_print " "
+ui_print "Done."
+ui_print "Coming from another ROM? Before rebooting:"
+ui_print "  Wipe > Format Data (type yes), then"
+ui_print "  Wipe > Advanced Wipe > Cache."
+ui_print "Updating this ROM? Just wipe Cache."
+ui_print " "
+exit 0
