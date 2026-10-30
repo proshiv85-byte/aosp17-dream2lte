@@ -1,0 +1,622 @@
+From 5ddcd468f008ea54f0d6e4504063776e10b8b8a8 Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <proshiv85@gmail.com>
+Date: Fri, 30 Oct 2026 11:46:15 +0200
+Subject: [PATCH] SystemUI: add a large condensed clock style for the AOD
+
+On AOD, show a large condensed clock (Roboto Flex at its narrowest
+width and display optical size), the date and a battery pill, centered
+in the upper part of the screen, with the AOD notification icons
+centered below them. A black scrim, raised with translationZ, hides the
+stock clock and smartspace while dozing.
+
+Leaving AOD, the clock rises, shrinks and loosens from condensed to
+regular width with emphasized easing while the date and battery fade
+first; the scrim then fades to reveal the lockscreen, whose own clock
+animates in. Entering AOD plays the motion in reverse, with the content
+fading in once the scrim has covered the lockscreen. Pulsing fades the
+style out so the stock pulse UI shows, and burn-in offsets glide once a
+minute.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../DefaultKeyguardBlueprintTest.kt           |   3 +
+ packages/SystemUI/res/values/ids.xml          |   4 +
+ .../blueprints/DefaultKeyguardBlueprint.kt    |   3 +
+ .../sections/AodNotificationIconsSection.kt   |  23 +-
+ .../view/layout/sections/AodStyleSection.kt   | 438 ++++++++++++++++++
+ .../KeyguardBlueprintRepositoryKosmos.kt      |   1 +
+ 6 files changed, 456 insertions(+), 16 deletions(-)
+ create mode 100644 packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/sections/AodStyleSection.kt
+
+diff --git a/packages/SystemUI/multivalentTests/src/com/android/systemui/keyguard/ui/view/layout/blueprints/DefaultKeyguardBlueprintTest.kt b/packages/SystemUI/multivalentTests/src/com/android/systemui/keyguard/ui/view/layout/blueprints/DefaultKeyguardBlueprintTest.kt
+index ab4e20498..7749c103c 100644
+--- a/packages/SystemUI/multivalentTests/src/com/android/systemui/keyguard/ui/view/layout/blueprints/DefaultKeyguardBlueprintTest.kt
++++ b/packages/SystemUI/multivalentTests/src/com/android/systemui/keyguard/ui/view/layout/blueprints/DefaultKeyguardBlueprintTest.kt
+@@ -30,6 +30,7 @@ import com.android.systemui.keyguard.ui.view.layout.sections.AccessibilityAction
+ import com.android.systemui.keyguard.ui.view.layout.sections.AodBurnInSection
+ import com.android.systemui.keyguard.ui.view.layout.sections.AodNotificationIconsSection
+ import com.android.systemui.keyguard.ui.view.layout.sections.AodPromotedNotificationSection
++import com.android.systemui.keyguard.ui.view.layout.sections.AodStyleSection
+ import com.android.systemui.keyguard.ui.view.layout.sections.ClockSection
+ import com.android.systemui.keyguard.ui.view.layout.sections.DefaultDeviceEntrySection
+ import com.android.systemui.keyguard.ui.view.layout.sections.DefaultIndicationAreaSection
+@@ -72,6 +73,7 @@ class DefaultKeyguardBlueprintTest : SysuiTestCase() {
+     @Mock private lateinit var clockSection: ClockSection
+     @Mock private lateinit var smartspaceSection: SmartspaceSection
+     @Mock private lateinit var keyguardSliceViewSection: KeyguardSliceViewSection
++    @Mock private lateinit var aodStyleSection: AodStyleSection
+     @Mock
+     private lateinit var udfpsAccessibilityOverlaySection: DefaultUdfpsAccessibilityOverlaySection
+ 
+@@ -96,6 +98,7 @@ class DefaultKeyguardBlueprintTest : SysuiTestCase() {
+                 clockSection,
+                 smartspaceSection,
+                 keyguardSliceViewSection,
++                aodStyleSection,
+                 udfpsAccessibilityOverlaySection,
+             )
+     }
+diff --git a/packages/SystemUI/res/values/ids.xml b/packages/SystemUI/res/values/ids.xml
+index a2e8b5e21..5de577db3 100644
+--- a/packages/SystemUI/res/values/ids.xml
++++ b/packages/SystemUI/res/values/ids.xml
+@@ -213,6 +213,10 @@
+     <item type="id" name="ambient_indication_container" />
+     <item type="id" name="aod_notification_icon_container" />
+     <item type="id" name="aod_promoted_notification_frame" />
++    <item type="id" name="aod_style_scrim" />
++    <item type="id" name="aod_style_clock" />
++    <item type="id" name="aod_style_date" />
++    <item type="id" name="aod_style_battery" />
+     <item type="id" name="burn_in_layer" />
+     <item type="id" name="burn_in_layer_empty_view" />
+     <item type="id" name="communal_tutorial_indicator" />
+diff --git a/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/blueprints/DefaultKeyguardBlueprint.kt b/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/blueprints/DefaultKeyguardBlueprint.kt
+index 0feca9f66..1c388f65e 100644
+--- a/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/blueprints/DefaultKeyguardBlueprint.kt
++++ b/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/blueprints/DefaultKeyguardBlueprint.kt
+@@ -24,6 +24,7 @@ import com.android.systemui.keyguard.ui.view.layout.sections.AccessibilityAction
+ import com.android.systemui.keyguard.ui.view.layout.sections.AodBurnInSection
+ import com.android.systemui.keyguard.ui.view.layout.sections.AodNotificationIconsSection
+ import com.android.systemui.keyguard.ui.view.layout.sections.AodPromotedNotificationSection
++import com.android.systemui.keyguard.ui.view.layout.sections.AodStyleSection
+ import com.android.systemui.keyguard.ui.view.layout.sections.ClockSection
+ import com.android.systemui.keyguard.ui.view.layout.sections.DefaultDeviceEntrySection
+ import com.android.systemui.keyguard.ui.view.layout.sections.DefaultIndicationAreaSection
+@@ -68,6 +69,7 @@ constructor(
+     clockSection: ClockSection,
+     smartspaceSection: SmartspaceSection,
+     keyguardSliceViewSection: KeyguardSliceViewSection,
++    aodStyleSection: AodStyleSection,
+     udfpsAccessibilityOverlaySection: DefaultUdfpsAccessibilityOverlaySection,
+ ) : KeyguardBlueprint {
+     override val id: String = DEFAULT
+@@ -88,6 +90,7 @@ constructor(
+             aodBurnInSection,
+             clockSection,
+             keyguardSliceViewSection,
++            aodStyleSection, // Above the stock clock and smartspace, which it hides on AOD
+             defaultDeviceEntrySection,
+             udfpsAccessibilityOverlaySection, // Add LAST: Intentionally has z-order above others
+         )
+diff --git a/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/sections/AodNotificationIconsSection.kt b/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/sections/AodNotificationIconsSection.kt
+index a5ca51e1b..3fd4b42c4 100644
+--- a/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/sections/AodNotificationIconsSection.kt
++++ b/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/sections/AodNotificationIconsSection.kt
+@@ -34,7 +34,6 @@ import com.android.systemui.keyguard.shared.model.KeyguardSection
+ import com.android.systemui.keyguard.ui.viewmodel.KeyguardRootViewModel
+ import com.android.systemui.res.R
+ import com.android.systemui.shade.ShadeDisplayAware
+-import com.android.systemui.shade.domain.interactor.ShadeModeInteractor
+ import com.android.systemui.statusbar.notification.icon.ui.viewbinder.AlwaysOnDisplayNotificationIconViewStore
+ import com.android.systemui.statusbar.notification.icon.ui.viewbinder.NotificationIconContainerViewBinder
+ import com.android.systemui.statusbar.notification.icon.ui.viewbinder.StatusBarIconViewBindingFailureTracker
+@@ -55,7 +54,6 @@ constructor(
+     private val nicAodIconViewStore: AlwaysOnDisplayNotificationIconViewStore,
+     @ShadeDisplayAware private val systemBarUtilsState: SystemBarUtilsState,
+     private val rootViewModel: KeyguardRootViewModel,
+-    private val shadeModeInteractor: ShadeModeInteractor,
+ ) : KeyguardSection() {
+ 
+     private var nicBindingDisposable: DisposableHandle? = null
+@@ -66,12 +64,10 @@ constructor(
+         nic =
+             NotificationIconContainer(context, null).apply {
+                 id = nicId
+-                setPaddingRelative(
+-                    resources.getDimensionPixelSize(R.dimen.below_clock_padding_start_icons),
+-                    0,
+-                    resources.getDimensionPixelOffset(R.dimen.shelf_icon_container_padding),
+-                    0,
+-                )
++                // Centered below the AodStyleSection battery, drawn above its scrim.
++                val padding = resources.getDimensionPixelOffset(R.dimen.shelf_icon_container_padding)
++                setPaddingRelative(padding, 0, padding, 0)
++                translationZ = AodStyleSection.AOD_STYLE_Z + 1f
+                 setVisibility(View.INVISIBLE)
+             }
+ 
+@@ -98,21 +94,16 @@ constructor(
+             context.resources.getDimensionPixelSize(clocksR.dimen.status_view_margin_horizontal)
+         val height = context.resources.getDimensionPixelSize(R.dimen.notification_shelf_height)
+         val isVisible = rootViewModel.isNotifIconContainerVisible.value
+-        val isFullWidthShade = shadeModeInteractor.isFullWidthShade.value
+ 
+         constraintSet.apply {
+-            connect(nicId, TOP, AodPromotedNotificationSection.viewId, BOTTOM, bottomMargin)
++            connect(nicId, TOP, AodStyleSection.batteryId, BOTTOM, bottomMargin)
+ 
+             setGoneMargin(nicId, BOTTOM, bottomMargin)
+             setVisibility(nicId, if (isVisible.value) VISIBLE else GONE)
+ 
+-            if (!isFullWidthShade) {
+-                // Don't create a start constraint, so the icons can hopefully right-align.
+-            } else {
+-                connect(nicId, START, PARENT_ID, START, horizontalMargin)
+-            }
++            connect(nicId, START, PARENT_ID, START, horizontalMargin)
+             connect(nicId, END, PARENT_ID, END, horizontalMargin)
+-
++            constrainWidth(nicId, ConstraintSet.WRAP_CONTENT)
+             constrainHeight(nicId, height)
+         }
+     }
+diff --git a/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/sections/AodStyleSection.kt b/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/sections/AodStyleSection.kt
+new file mode 100644
+index 000000000..bab4111eb
+--- /dev/null
++++ b/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/layout/sections/AodStyleSection.kt
+@@ -0,0 +1,438 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.systemui.keyguard.ui.view.layout.sections
++
++import android.animation.ValueAnimator
++import android.content.Context
++import android.graphics.Canvas
++import android.graphics.Color
++import android.graphics.Paint
++import android.graphics.RectF
++import android.graphics.Typeface
++import android.text.Editable
++import android.text.TextWatcher
++import android.text.format.DateFormat
++import android.util.TypedValue
++import android.view.View
++import android.widget.TextClock
++import com.android.app.animation.Interpolators
++import androidx.constraintlayout.widget.ConstraintLayout
++import androidx.constraintlayout.widget.ConstraintSet
++import androidx.constraintlayout.widget.ConstraintSet.BOTTOM
++import androidx.constraintlayout.widget.ConstraintSet.END
++import androidx.constraintlayout.widget.ConstraintSet.MATCH_CONSTRAINT
++import androidx.constraintlayout.widget.ConstraintSet.PARENT_ID
++import androidx.constraintlayout.widget.ConstraintSet.START
++import androidx.constraintlayout.widget.ConstraintSet.TOP
++import androidx.constraintlayout.widget.ConstraintSet.WRAP_CONTENT
++import androidx.lifecycle.Lifecycle
++import androidx.lifecycle.repeatOnLifecycle
++import com.android.app.tracing.coroutines.launchTraced as launch
++import com.android.systemui.doze.util.getBurnInOffset
++import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
++import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
++import com.android.systemui.keyguard.shared.model.KeyguardSection
++import com.android.systemui.keyguard.shared.model.KeyguardState
++import com.android.systemui.lifecycle.repeatWhenAttached
++import com.android.systemui.res.R
++import com.android.systemui.shade.ShadeDisplayAware
++import com.android.systemui.statusbar.policy.BatteryController
++import com.android.systemui.statusbar.policy.BatteryController.BatteryStateChangeCallback
++import java.util.Locale
++import javax.inject.Inject
++import kotlinx.coroutines.DisposableHandle
++import kotlin.math.abs
++import kotlinx.coroutines.awaitCancellation
++
++/**
++ * Always on display style with a large condensed clock, the date and a battery pill, centered in
++ * the upper part of the screen.
++ *
++ * It sits above the stock clock and smartspace and hides them with a black scrim while dozing. When
++ * the device wakes, the scrim fades out to reveal the stock lockscreen while the large clock
++ * shrinks and moves towards the stock clock.
++ */
++class AodStyleSection
++@Inject
++constructor(
++    @ShadeDisplayAware private val context: Context,
++    private val keyguardInteractor: KeyguardInteractor,
++    private val transitionInteractor: KeyguardTransitionInteractor,
++    private val batteryController: BatteryController,
++) : KeyguardSection() {
++
++    private lateinit var scrim: View
++    private lateinit var clock: TextClock
++    private lateinit var date: TextClock
++    private lateinit var battery: BatteryPillView
++    private var bindingDisposable: DisposableHandle? = null
++
++    /** 1 while dozing, 0 on the lockscreen; follows the AOD transition. */
++    private var aodAmount = 0f
++    /** Whether the device is going into AOD rather than out of it. */
++    private var enteringAod = false
++    /** Fades the style out while a notification pulses, so the stock pulse UI shows. */
++    private var pulseAlpha = 1f
++    private var pulseAnimator: ValueAnimator? = null
++    private var burnInX = 0f
++    private var burnInY = 0f
++    private var burnInAnimator: ValueAnimator? = null
++
++    private val content: List<View>
++        get() = listOf(clock, date, battery)
++
++    override fun addViews(constraintLayout: ConstraintLayout) {
++        val metrics = context.resources.displayMetrics
++        val shortSide = minOf(metrics.widthPixels, metrics.heightPixels)
++
++        scrim =
++            View(context).apply {
++                id = R.id.aod_style_scrim
++                setBackgroundColor(Color.BLACK)
++                // It is raised with translationZ; no outline, so it casts no shadow.
++                outlineProvider = null
++                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
++            }
++        clock =
++            TextClock(context).apply {
++                id = R.id.aod_style_clock
++                format12Hour = "h:mm"
++                format24Hour = "HH:mm"
++                typeface = Typeface.create(CLOCK_FONT_FAMILY, Typeface.NORMAL)
++                fontVariationSettings = clockFontVariations(CLOCK_WIDTH, CLOCK_WEIGHT)
++                setTextSize(TypedValue.COMPLEX_UNIT_PX, shortSide * CLOCK_SIZE_FRACTION)
++                letterSpacing = CLOCK_LETTER_SPACING
++                includeFontPadding = false
++                setTextColor(Color.WHITE)
++                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
++                // The time changes once a minute: move the burn-in offset along with it.
++                addTextChangedListener(
++                    object : TextWatcher {
++                        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
++
++                        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
++
++                        override fun afterTextChanged(s: Editable?) = updateBurnIn()
++                    }
++                )
++            }
++        date =
++            TextClock(context).apply {
++                id = R.id.aod_style_date
++                val pattern = DateFormat.getBestDateTimePattern(Locale.getDefault(), "EEEEMMMd")
++                format12Hour = pattern
++                format24Hour = pattern
++                typeface = Typeface.create(CLOCK_FONT_FAMILY, Typeface.NORMAL)
++                fontVariationSettings = "'wght' 450"
++                setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
++                includeFontPadding = false
++                setTextColor(Color.WHITE)
++                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
++            }
++        battery = BatteryPillView(context).apply { id = R.id.aod_style_battery }
++
++        // The stock clock views are re-added to the root whenever the clock changes, which puts
++        // them last in drawing order; use Z instead of the view order to stay above them.
++        (listOf(scrim) + content).forEach {
++            it.visibility = View.INVISIBLE
++            it.translationZ = AOD_STYLE_Z
++            constraintLayout.addView(it)
++        }
++    }
++
++    override fun bindData(constraintLayout: ConstraintLayout) {
++        bindingDisposable?.dispose()
++        bindingDisposable =
++            scrim.repeatWhenAttached {
++                repeatOnLifecycle(Lifecycle.State.CREATED) {
++                    launch("$TAG#aodAmount") {
++                        transitionInteractor.transitionValue(KeyguardState.AOD).collect {
++                            if (it != aodAmount) enteringAod = it > aodAmount
++                            aodAmount = it
++                            apply()
++                        }
++                    }
++                    launch("$TAG#isPulsing") {
++                        keyguardInteractor.isPulsing.collect { animatePulse(it) }
++                    }
++                    launch("$TAG#battery") {
++                        val callback =
++                            object : BatteryStateChangeCallback {
++                                override fun onBatteryLevelChanged(
++                                    level: Int,
++                                    pluggedIn: Boolean,
++                                    charging: Boolean,
++                                ) {
++                                    battery.level = level
++                                }
++                            }
++                        batteryController.addCallback(callback)
++                        try {
++                            awaitCancellation()
++                        } finally {
++                            batteryController.removeCallback(callback)
++                        }
++                    }
++                }
++            }
++    }
++
++    override fun applyConstraints(constraintSet: ConstraintSet) {
++        val metrics = context.resources.displayMetrics
++        val height = maxOf(metrics.widthPixels, metrics.heightPixels)
++        val dp = metrics.density
++        constraintSet.apply {
++            connect(scrimId, TOP, PARENT_ID, TOP)
++            connect(scrimId, START, PARENT_ID, START)
++            connect(scrimId, END, PARENT_ID, END)
++            constrainWidth(scrimId, MATCH_CONSTRAINT)
++            constrainHeight(scrimId, (height * SCRIM_HEIGHT_FRACTION).toInt())
++
++            content.forEach {
++                constrainWidth(it.id, WRAP_CONTENT)
++                constrainHeight(it.id, WRAP_CONTENT)
++                connect(it.id, START, PARENT_ID, START)
++                connect(it.id, END, PARENT_ID, END)
++            }
++            connect(clockId, TOP, PARENT_ID, TOP, (height * CLOCK_TOP_FRACTION).toInt())
++            connect(dateId, TOP, clockId, BOTTOM, (4 * dp).toInt())
++            connect(batteryId, TOP, dateId, BOTTOM, (10 * dp).toInt())
++        }
++    }
++
++    override fun removeViews(constraintLayout: ConstraintLayout) {
++        bindingDisposable?.dispose()
++        pulseAnimator?.cancel()
++        burnInAnimator?.cancel()
++        (listOf(scrim) + content).forEach { constraintLayout.removeView(it) }
++    }
++
++    private fun animatePulse(pulsing: Boolean) {
++        pulseAnimator?.cancel()
++        pulseAnimator =
++            ValueAnimator.ofFloat(pulseAlpha, if (pulsing) 0f else 1f).apply {
++                duration = PULSE_FADE_DURATION_MS
++                addUpdateListener {
++                    pulseAlpha = it.animatedValue as Float
++                    apply()
++                }
++                start()
++            }
++    }
++
++    private fun updateBurnIn() {
++        val res = context.resources
++        val amplitudeX = res.getDimensionPixelSize(R.dimen.burn_in_prevention_offset_x)
++        val amplitudeY = res.getDimensionPixelSize(R.dimen.burn_in_prevention_offset_y)
++        val toX = (getBurnInOffset(amplitudeX * 2, true) - amplitudeX).toFloat()
++        val toY = (getBurnInOffset(amplitudeY * 2, false) - amplitudeY).toFloat()
++        val fromX = burnInX
++        val fromY = burnInY
++        // Glide to the new offset instead of jumping once a minute.
++        burnInAnimator?.cancel()
++        burnInAnimator =
++            ValueAnimator.ofFloat(0f, 1f).apply {
++                duration = BURN_IN_DURATION_MS
++                interpolator = Interpolators.STANDARD
++                addUpdateListener {
++                    val f = it.animatedValue as Float
++                    burnInX = lerp(fromX, toX, f)
++                    burnInY = lerp(fromY, toY, f)
++                    apply()
++                }
++                start()
++            }
++    }
++
++    /**
++     * Lays the style out for the current AOD amount: 1 on AOD, 0 on the lockscreen.
++     *
++     * Leaving AOD, the clock rises, shrinks and loosens from condensed to regular width with
++     * emphasized easing, and fades during the first half of the transition. The date and battery
++     * fade sooner and move less. The scrim then fades to reveal the lockscreen, whose clock
++     * animates in on its own. Entering AOD plays the motion in reverse, but the content only fades
++     * in once the scrim has covered the lockscreen.
++     */
++    private fun apply() {
++        // Transition values can stop just short of 0; treat that as hidden.
++        val amount = (aodAmount * pulseAlpha).let { if (it < HIDDEN_AMOUNT) 0f else it }
++        val visibility = if (amount > 0f) View.VISIBLE else View.INVISIBLE
++        (listOf(scrim) + content).forEach { it.visibility = visibility }
++        if (amount <= 0f) return
++
++        val progress = 1f - amount
++        val move = Interpolators.EMPHASIZED.getInterpolation(progress)
++        val rise = context.resources.displayMetrics.heightPixels * EXIT_RISE_FRACTION * move
++
++        // The scrim stays opaque while the clock leaves, so the stock clock under it never shows
++        // next to this one; then it reveals the lockscreen.
++        scrim.alpha = 1f - Interpolators.STANDARD.getInterpolation(
++            ((progress - SCRIM_FADE_START) / (1f - SCRIM_FADE_START)).coerceIn(0f, 1f)
++        )
++
++        val scale = lerp(1f, EXIT_SCALE, move)
++        clock.scaleX = scale
++        clock.scaleY = scale
++        clock.alpha = contentAlpha(progress, CLOCK_FADE_END)
++        setClockFont(width = lerp(CLOCK_WIDTH, EXIT_WIDTH, move), weight = lerp(CLOCK_WEIGHT, EXIT_WEIGHT, move))
++        clock.translationX = burnInX
++        clock.translationY = burnInY - rise
++
++        // Keep the date and battery attached to the bottom of the shrinking clock.
++        val clockShrink = clock.height * (1f - scale) / 2f
++        val detailAlpha = contentAlpha(progress, DETAIL_FADE_END)
++        listOf(date, battery).forEach {
++            it.alpha = detailAlpha
++            it.translationX = burnInX
++            it.translationY = burnInY - rise * DETAIL_RISE_RATIO - clockShrink
++        }
++    }
++
++    /**
++     * Leaving AOD, content fades out over the first [fadeEnd] of the transition. Entering AOD, it
++     * only fades in once the scrim is opaque, so it never shows next to the dimming lockscreen.
++     */
++    private fun contentAlpha(progress: Float, fadeEnd: Float): Float =
++        if (enteringAod) {
++            Interpolators.STANDARD_DECELERATE.getInterpolation(
++                ((SCRIM_FADE_START - progress) / SCRIM_FADE_START).coerceIn(0f, 1f)
++            )
++        } else {
++            1f - Interpolators.STANDARD_ACCELERATE.getInterpolation(
++                (progress / fadeEnd).coerceAtMost(1f)
++            )
++        }
++
++    private var clockFontWidth = Float.NaN
++    private var clockFontWeight = Float.NaN
++
++    /** Changes the clock axes; a change relayouts the text, so skip ones too small to see. */
++    private fun setClockFont(width: Float, weight: Float) {
++        if (abs(width - clockFontWidth) < 1f && abs(weight - clockFontWeight) < 2f) return
++        clockFontWidth = width
++        clockFontWeight = weight
++        clock.fontVariationSettings = clockFontVariations(width, weight)
++    }
++
++    private fun lerp(start: Float, end: Float, fraction: Float) = start + (end - start) * fraction
++
++    /** An outlined battery with the level inside, like a status bar battery pill. */
++    private class BatteryPillView(context: Context) : View(context) {
++        private val dp = resources.displayMetrics.density
++        private val strokeWidth = 1.7f * dp
++        private val bodyWidth = 30f * dp
++        private val bodyHeight = 16f * dp
++        private val nubWidth = 2.5f * dp
++        private val nubHeight = 6f * dp
++        private val body = RectF()
++        private val nub = RectF()
++
++        private val outlinePaint =
++            Paint(Paint.ANTI_ALIAS_FLAG).apply {
++                style = Paint.Style.STROKE
++                strokeWidth = this@BatteryPillView.strokeWidth
++                color = Color.WHITE
++            }
++        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
++        private val textPaint =
++            Paint(Paint.ANTI_ALIAS_FLAG).apply {
++                color = Color.WHITE
++                textAlign = Paint.Align.CENTER
++                textSize = 11f * resources.displayMetrics.scaledDensity
++                typeface = Typeface.create(CLOCK_FONT_FAMILY, Typeface.NORMAL)
++                fontVariationSettings = "'wght' 650"
++            }
++
++        var level = 0
++            set(value) {
++                if (field != value) {
++                    field = value
++                    invalidate()
++                }
++            }
++
++        init {
++            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
++        }
++
++        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
++            setMeasuredDimension(
++                (bodyWidth + nubWidth + strokeWidth * 2).toInt(),
++                (bodyHeight + strokeWidth * 2).toInt(),
++            )
++        }
++
++        override fun onDraw(canvas: Canvas) {
++            val half = strokeWidth / 2f
++            body.set(half, half, bodyWidth + half, bodyHeight + half)
++            canvas.drawRoundRect(body, 4.5f * dp, 4.5f * dp, outlinePaint)
++            nub.set(
++                body.right + strokeWidth / 2f,
++                body.centerY() - nubHeight / 2f,
++                body.right + strokeWidth / 2f + nubWidth,
++                body.centerY() + nubHeight / 2f,
++            )
++            canvas.drawRoundRect(nub, dp, dp, fillPaint)
++            val baseline = body.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
++            canvas.drawText(level.toString(), body.centerX(), baseline, textPaint)
++        }
++    }
++
++    companion object {
++        private const val TAG = "AodStyleSection"
++
++        private val scrimId = R.id.aod_style_scrim
++        private val clockId = R.id.aod_style_clock
++        private val dateId = R.id.aod_style_date
++        val batteryId = R.id.aod_style_battery
++
++        private const val CLOCK_FONT_FAMILY = "roboto-flex"
++        /** Narrowest width, display optical size and tall figures: a condensed clock. */
++        private const val CLOCK_WIDTH = 25f
++        private const val CLOCK_WEIGHT = 560f
++
++        private fun clockFontVariations(width: Float, weight: Float) =
++            "'wdth' $width, 'wght' $weight, 'opsz' 144, 'YTFI' 788"
++        private const val CLOCK_SIZE_FRACTION = 0.326f
++        private const val CLOCK_LETTER_SPACING = 0.04f
++        private const val CLOCK_TOP_FRACTION = 0.2f
++        /**
++         * The scrim covers everything above the bottom indication text: the stock clock (the large
++         * two line clock reaches past the middle of the screen), smartspace and AOD notifications.
++         */
++        private const val SCRIM_HEIGHT_FRACTION = 0.86f
++        /** Where the clock heads when leaving AOD; see [apply]. */
++        private const val EXIT_SCALE = 0.82f
++        private const val EXIT_WIDTH = 60f
++        private const val EXIT_WEIGHT = 420f
++        private const val EXIT_RISE_FRACTION = 0.05f
++        /** Fraction of the transition over which the clock and the details fade out. */
++        private const val CLOCK_FADE_END = 0.5f
++        private const val SCRIM_FADE_START = 0.3f
++        private const val DETAIL_FADE_END = 0.35f
++        private const val DETAIL_RISE_RATIO = 0.6f
++        private const val BURN_IN_DURATION_MS = 1000L
++        private const val PULSE_FADE_DURATION_MS = 200L
++        private const val HIDDEN_AMOUNT = 0.01f
++
++        /**
++         * Z of the style, above the stock clock; the AOD notification icons go above it. The stock
++         * clock is raised while it animates between the lockscreen and AOD, so stay well above.
++         */
++        const val AOD_STYLE_Z = 100f
++    }
++}
+diff --git a/packages/SystemUI/tests/utils/src/com/android/systemui/keyguard/data/repository/KeyguardBlueprintRepositoryKosmos.kt b/packages/SystemUI/tests/utils/src/com/android/systemui/keyguard/data/repository/KeyguardBlueprintRepositoryKosmos.kt
+index bedaa32d4..15c5e529c 100644
+--- a/packages/SystemUI/tests/utils/src/com/android/systemui/keyguard/data/repository/KeyguardBlueprintRepositoryKosmos.kt
++++ b/packages/SystemUI/tests/utils/src/com/android/systemui/keyguard/data/repository/KeyguardBlueprintRepositoryKosmos.kt
+@@ -80,6 +80,7 @@ val Kosmos.defaultKeyguardBlueprint by
+             clockSection = keyguardClockSection,
+             smartspaceSection = keyguardSmartspaceSection,
+             keyguardSliceViewSection = mock(),
++            aodStyleSection = mock(),
+             udfpsAccessibilityOverlaySection = mock(),
+             accessibilityActionsSection = mock(),
+             batteryChargingPopupMenuSection = mock(),
+-- 
+2.56.0
+

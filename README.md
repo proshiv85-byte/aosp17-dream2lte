@@ -24,6 +24,25 @@ Tested on SM-G955F:
 
 This is a `userdebug` build: `adb root` works.
 
+## Features
+
+On top of plain AOSP:
+
+- **Performance:** the Pixel power HAL applies touch, scroll and app launch
+  boosts; background work stays on the little cores (cpusets); SystemUI,
+  Launcher3 and Settings are AOT compiled (`speed`); everything is compiled
+  for the concurrent copying GC the 4.4 kernel runs (no userfaultfd), so the
+  prebuilt boot image and odex files are actually used; system windows are
+  hardware rendered.
+- **AOD:** a large condensed clock (Roboto Flex) with the date, a battery pill
+  and the notification icons, with eased animations to and from the
+  lockscreen. Double tap the AOD to wake.
+- **Wallpaper blur:** a "Blur wallpaper" switch when setting a photo as the
+  wallpaper, with a live preview.
+
+AOSP 17 can also theme every app icon, including apps without a monochrome
+icon: turn on themed icons in Wallpaper & style.
+
 ## Repositories
 
 | Path | Repo |
@@ -40,10 +59,12 @@ This is a `userdebug` build: `adb root` works.
 
 Changes to AOSP's own projects are kept as patches in [`patches/`](patches)
 (bionic, build/make, build/blueprint, frameworks/native, hardware/interfaces,
-Connectivity, system/bpf, system/core, libion, vold). They are mostly about
-running Android 17 on a 4.4 kernel: BPF kernel-version override and no BPF
-ring buffer, fscrypt v1 keyring for vold/init, legacy ION, legacy gralloc in
-libui, and compat libraries for the old Samsung vendor blobs.
+Connectivity, system/bpf, system/core, libion, vold, frameworks/base,
+WallpaperPicker2). They are mostly about running Android 17 on a 4.4 kernel:
+BPF kernel-version override and no BPF ring buffer, fscrypt v1 keyring for
+vold/init, legacy ION, legacy gralloc in libui, and compat libraries for the
+old Samsung vendor blobs. The frameworks/base (SystemUI AOD) and
+WallpaperPicker2 (wallpaper blur) patches are features.
 
 ## Building
 
@@ -120,6 +141,9 @@ reboot to System.
 - If GPS ever reports a position far away, delete
   `/data/vendor/gps/gldata.sto` and `/data/vendor/gps/lto2.dat` as root and
   reboot.
+- Video the hardware decoder can't take (over 3840x2160, e.g. 1440x2960
+  portrait screen recordings) falls back to software decoding. That caused a
+  kernel panic once in testing; it did not happen again in a dozen retries.
 
 ## Credits
 

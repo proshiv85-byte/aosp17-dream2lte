@@ -1,0 +1,543 @@
+From 62307bd3946a42510cf62c486fcbb553d9fe56e0 Mon Sep 17 00:00:00 2001
+From: proshiv85-byte <proshiv85@gmail.com>
+Date: Wed, 28 Oct 2026 12:56:10 +0200
+Subject: [PATCH] WallpaperPicker2: add a blur option when setting a static
+ wallpaper
+
+The apply wallpaper screen gets a "Blur wallpaper" switch, shown for
+static wallpapers. While it is on, the previews are blurred with a
+RenderEffect, and the wallpaper is blurred at full resolution before it
+is set. The strength is relative to the visible width, so the preview
+and the result match.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Change-Id: I38bc7ac0e7987fe13b68dd328e405bec03fe4bdb
+---
+ res/layout/small_preview_pager_handheld.xml   |   9 ++
+ res/values/strings.xml                        |   3 +
+ .../preview_pager_motion_scene_handheld.xml   |  46 ++++++-
+ .../data/content/WallpaperClient.kt           |   2 +
+ .../data/content/WallpaperClientImpl.kt       |  23 +++-
+ .../data/repository/WallpaperRepository.kt    |   2 +
+ .../interactor/WallpaperPreviewInteractor.kt  |   2 +
+ .../ui/binder/ApplyWallpaperScreenBinder.kt   |  27 ++++
+ .../ui/binder/StaticWallpaperPreviewBinder.kt |  11 ++
+ .../StaticWallpaperPreviewViewModel.kt        |   9 ++
+ .../ui/viewmodel/WallpaperPreviewViewModel.kt |   1 +
+ .../android/wallpaper/util/WallpaperBlur.kt   | 122 ++++++++++++++++++
+ .../wallpaper/testing/FakeWallpaperClient.kt  |   1 +
+ 13 files changed, 252 insertions(+), 6 deletions(-)
+ create mode 100644 src/com/android/wallpaper/util/WallpaperBlur.kt
+
+diff --git a/res/layout/small_preview_pager_handheld.xml b/res/layout/small_preview_pager_handheld.xml
+index 7ca8ac1..d707d16 100644
+--- a/res/layout/small_preview_pager_handheld.xml
++++ b/res/layout/small_preview_pager_handheld.xml
+@@ -78,6 +78,15 @@
+         android:text="@string/set_wallpaper_home_screen_destination"
+         android:visibility="gone" />
+ 
++    <com.google.android.material.materialswitch.MaterialSwitch
++        android:id="@+id/blur_switch"
++        android:layout_width="wrap_content"
++        android:layout_height="wrap_content"
++        android:text="@string/set_wallpaper_blur"
++        android:textAppearance="@style/TextAppearance.SettingsLib.TitleSmall"
++        android:theme="@style/Theme.Material3.DynamicColors.DayNight"
++        android:visibility="gone" />
++
+     <Button
+         android:id="@+id/apply_button"
+         android:layout_width="match_parent"
+diff --git a/res/values/strings.xml b/res/values/strings.xml
+index f2f066f..140519b 100755
+--- a/res/values/strings.xml
++++ b/res/values/strings.xml
+@@ -94,6 +94,9 @@
+          [CHAR LIMIT=100] -->
+     <string name="set_wallpaper_home_screen_destination">Home screen</string>
+ 
++    <!-- Label for the switch that blurs a static wallpaper before it is set. [CHAR LIMIT=30] -->
++    <string name="set_wallpaper_blur">Blur wallpaper</string>
++
+     <!-- Label referring to the lock screen of the device, i.e. what is shown when user turns on the
+          device screen. [CHAR LIMIT=100] -->
+     <string name="set_wallpaper_lock_screen_destination">Lock screen</string>
+diff --git a/res/xml/preview_pager_motion_scene_handheld.xml b/res/xml/preview_pager_motion_scene_handheld.xml
+index c2742fe..d59afb0 100644
+--- a/res/xml/preview_pager_motion_scene_handheld.xml
++++ b/res/xml/preview_pager_motion_scene_handheld.xml
+@@ -72,6 +72,16 @@
+             app:layout_constraintEnd_toEndOf="@+id/home_preview"
+             app:layout_constraintBottom_toTopOf="@+id/apply_button" />
+ 
++        <Constraint
++            android:id="@+id/blur_switch"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:alpha="0"
++            app:visibilityMode="ignore"
++            app:layout_constraintStart_toStartOf="parent"
++            app:layout_constraintEnd_toEndOf="parent"
++            app:layout_constraintBottom_toTopOf="@+id/apply_button" />
++
+         <Constraint
+             android:id="@+id/apply_button"
+             android:layout_width="0dp"
+@@ -137,6 +147,16 @@
+             app:layout_constraintEnd_toEndOf="@+id/home_preview"
+             app:layout_constraintBottom_toTopOf="@+id/apply_button" />
+ 
++        <Constraint
++            android:id="@+id/blur_switch"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:alpha="0"
++            app:visibilityMode="ignore"
++            app:layout_constraintStart_toStartOf="parent"
++            app:layout_constraintEnd_toEndOf="parent"
++            app:layout_constraintBottom_toTopOf="@+id/apply_button" />
++
+         <Constraint
+             android:id="@+id/apply_button"
+             android:layout_width="0dp"
+@@ -189,7 +209,7 @@
+             android:alpha="0"
+             app:layout_constraintStart_toStartOf="@+id/lock_preview"
+             app:layout_constraintEnd_toEndOf="@+id/lock_preview"
+-            app:layout_constraintBottom_toTopOf="@+id/apply_button" />
++            app:layout_constraintBottom_toTopOf="@+id/blur_switch" />
+ 
+         <Constraint
+             android:id="@+id/home_preview"
+@@ -209,6 +229,17 @@
+             android:alpha="0"
+             app:layout_constraintStart_toStartOf="@+id/home_preview"
+             app:layout_constraintEnd_toEndOf="@+id/home_preview"
++            app:layout_constraintBottom_toTopOf="@+id/blur_switch" />
++
++        <Constraint
++            android:id="@+id/blur_switch"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:layout_marginBottom="@dimen/handheld_apply_wallpaper_preview_button_margin_bottom"
++            android:alpha="0"
++            app:visibilityMode="ignore"
++            app:layout_constraintStart_toStartOf="parent"
++            app:layout_constraintEnd_toEndOf="parent"
+             app:layout_constraintBottom_toTopOf="@+id/apply_button" />
+ 
+         <Constraint
+@@ -270,7 +301,7 @@
+             android:alpha="1"
+             app:layout_constraintStart_toStartOf="@+id/lock_preview"
+             app:layout_constraintEnd_toEndOf="@+id/lock_preview"
+-            app:layout_constraintBottom_toTopOf="@+id/apply_button" />
++            app:layout_constraintBottom_toTopOf="@+id/blur_switch" />
+ 
+         <Constraint
+             android:id="@+id/home_preview"
+@@ -290,6 +321,17 @@
+             android:alpha="1"
+             app:layout_constraintStart_toStartOf="@+id/home_preview"
+             app:layout_constraintEnd_toEndOf="@+id/home_preview"
++            app:layout_constraintBottom_toTopOf="@+id/blur_switch" />
++
++        <Constraint
++            android:id="@+id/blur_switch"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:layout_marginBottom="@dimen/handheld_apply_wallpaper_preview_button_margin_bottom"
++            android:alpha="1"
++            app:visibilityMode="ignore"
++            app:layout_constraintStart_toStartOf="parent"
++            app:layout_constraintEnd_toEndOf="parent"
+             app:layout_constraintBottom_toTopOf="@+id/apply_button" />
+ 
+         <Constraint
+diff --git a/src/com/android/wallpaper/picker/customization/data/content/WallpaperClient.kt b/src/com/android/wallpaper/picker/customization/data/content/WallpaperClient.kt
+index acb10de..40d8477 100644
+--- a/src/com/android/wallpaper/picker/customization/data/content/WallpaperClient.kt
++++ b/src/com/android/wallpaper/picker/customization/data/content/WallpaperClient.kt
+@@ -54,6 +54,7 @@ interface WallpaperClient {
+      * @param wallpaperSize raw wallpaper size.
+      * @param asset wallpaper asset.
+      * @param fullPreviewCropModels full preview crop info for each dimension that user has cropped.
++     * @param blur whether to blur the wallpaper before setting it.
+      */
+     suspend fun setStaticWallpaper(
+         @SetWallpaperEntryPoint setWallpaperEntryPoint: Int,
+@@ -63,6 +64,7 @@ interface WallpaperClient {
+         wallpaperSize: Point,
+         asset: Asset,
+         fullPreviewCropModels: Map<Point, FullPreviewCropModel>?,
++        blur: Boolean = false,
+     )
+ 
+     /**
+diff --git a/src/com/android/wallpaper/picker/customization/data/content/WallpaperClientImpl.kt b/src/com/android/wallpaper/picker/customization/data/content/WallpaperClientImpl.kt
+index 5a4dd55..e07c5b1 100644
+--- a/src/com/android/wallpaper/picker/customization/data/content/WallpaperClientImpl.kt
++++ b/src/com/android/wallpaper/picker/customization/data/content/WallpaperClientImpl.kt
+@@ -64,6 +64,7 @@ import com.android.wallpaper.picker.di.modules.BackgroundDispatcher
+ import com.android.wallpaper.picker.preview.shared.model.FullPreviewCropModel
+ import com.android.wallpaper.util.CurrentWallpaperInfoUtils.getCurrentWallpapers
+ import com.android.wallpaper.util.CurrentWallpaperModelUtils
++import com.android.wallpaper.util.WallpaperBlur
+ import com.android.wallpaper.util.WallpaperCropUtils
+ import com.android.wallpaper.util.converter.WallpaperModelFactory
+ import com.android.wallpaper.util.toDescription
+@@ -72,6 +73,7 @@ import java.io.IOException
+ import java.io.InputStream
+ import javax.inject.Inject
+ import javax.inject.Singleton
++import kotlin.math.min
+ import kotlinx.coroutines.CancellableContinuation
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.flow.MutableStateFlow
+@@ -151,6 +153,7 @@ constructor(
+         wallpaperSize: Point,
+         asset: Asset,
+         fullPreviewCropModels: Map<Point, FullPreviewCropModel>?,
++        blur: Boolean,
+     ) {
+         if (destination == HOME || destination == BOTH) {
+             // Disable rotation wallpaper when setting to home screen. Daily rotation rotates
+@@ -165,18 +168,30 @@ constructor(
+                 fullPreviewCropModels?.let { cropModels ->
+                     cropModels.mapValues { it.value.adjustCropForParallax(wallpaperSize) }
+                 } ?: emptyMap()
+-            val hash = "${BitmapUtils.generateHashCode(bitmap)}"
++            val wallpaperBitmap =
++                if (blur) {
++                    // The blur strength follows the visible width: the crop for a portrait
++                    // display, or a phone-shaped part of the image without a crop.
++                    val visibleWidth =
++                        fullPreviewCropModels?.values?.minOfOrNull { it.cropHint.width() }
++                            ?: min(bitmap.width, bitmap.height / 2)
++                    WallpaperBlur.blur(bitmap, visibleWidth)
++                } else {
++                    bitmap
++                }
++            val hash = "${BitmapUtils.generateHashCode(wallpaperBitmap)}"
+             val managerId =
+                 wallpaperManager.setStaticWallpaperWithDescription(
+-                    asset.getStreamOrFromBitmap(bitmap),
+-                    bitmap,
++                    // The asset stream is the original image, so a blurred one is set as bitmap.
++                    if (blur) null else asset.getStreamOrFromBitmap(bitmap),
++                    wallpaperBitmap,
+                     wallpaperModel.toDescription(hash, cropHintsWithParallax),
+                     destination,
+                     asset,
+                 )
+ 
+             wallpaperPreferences.setStaticWallpaperMetadata(
+-                metadata = wallpaperModel.getMetadata(bitmap, managerId),
++                metadata = wallpaperModel.getMetadata(wallpaperBitmap, managerId),
+                 destination = destination,
+             )
+ 
+diff --git a/src/com/android/wallpaper/picker/customization/data/repository/WallpaperRepository.kt b/src/com/android/wallpaper/picker/customization/data/repository/WallpaperRepository.kt
+index 4b43317..8251925 100644
+--- a/src/com/android/wallpaper/picker/customization/data/repository/WallpaperRepository.kt
++++ b/src/com/android/wallpaper/picker/customization/data/repository/WallpaperRepository.kt
+@@ -160,6 +160,7 @@ constructor(
+         wallpaperSize: Point,
+         asset: Asset,
+         fullPreviewCropModels: Map<Point, FullPreviewCropModel>? = null,
++        blur: Boolean = false,
+     ) {
+         // TODO(b/303317694): provide set wallpaper status as flow
+         withContext(backgroundDispatcher) {
+@@ -171,6 +172,7 @@ constructor(
+                 wallpaperSize,
+                 asset,
+                 fullPreviewCropModels,
++                blur,
+             )
+         }
+     }
+diff --git a/src/com/android/wallpaper/picker/preview/domain/interactor/WallpaperPreviewInteractor.kt b/src/com/android/wallpaper/picker/preview/domain/interactor/WallpaperPreviewInteractor.kt
+index 924d7c7..ad445b2 100644
+--- a/src/com/android/wallpaper/picker/preview/domain/interactor/WallpaperPreviewInteractor.kt
++++ b/src/com/android/wallpaper/picker/preview/domain/interactor/WallpaperPreviewInteractor.kt
+@@ -93,6 +93,7 @@ constructor(
+         wallpaperSize: Point,
+         asset: Asset,
+         fullPreviewCropModels: Map<Point, FullPreviewCropModel>? = null,
++        blur: Boolean = false,
+     ) {
+         wallpaperRepository.setStaticWallpaper(
+             setWallpaperEntryPoint,
+@@ -102,6 +103,7 @@ constructor(
+             wallpaperSize,
+             asset,
+             fullPreviewCropModels,
++            blur,
+         )
+     }
+ 
+diff --git a/src/com/android/wallpaper/picker/preview/ui/binder/ApplyWallpaperScreenBinder.kt b/src/com/android/wallpaper/picker/preview/ui/binder/ApplyWallpaperScreenBinder.kt
+index b316a08..6e29909 100644
+--- a/src/com/android/wallpaper/picker/preview/ui/binder/ApplyWallpaperScreenBinder.kt
++++ b/src/com/android/wallpaper/picker/preview/ui/binder/ApplyWallpaperScreenBinder.kt
+@@ -19,6 +19,7 @@ package com.android.wallpaper.picker.preview.ui.binder
+ import android.view.View
+ import android.widget.Button
+ import android.widget.CheckBox
++import android.widget.CompoundButton
+ import android.widget.TextView
+ import androidx.core.content.ContextCompat
+ import androidx.core.graphics.ColorUtils
+@@ -62,6 +63,12 @@ object ApplyWallpaperScreenBinder {
+         val homeCheckbox = previewPager.requireViewById<CheckBox>(R.id.home_checkbox)
+         val lockCheckbox = previewPager.requireViewById<CheckBox>(R.id.lock_checkbox)
+         val subTitle = previewPager.requireViewById<TextView>(R.id.apply_wallpaper_description)
++        // Only the handheld layout has the blur switch.
++        val blurSwitch = previewPager.findViewById<CompoundButton>(R.id.blur_switch)
++        val staticViewModel = viewModel.staticWallpaperPreviewViewModel
++        blurSwitch?.setOnCheckedChangeListener { _, checked ->
++            staticViewModel.setBlurEnabled(checked)
++        }
+         lifecycleOwner.lifecycleScope.launch {
+             lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                 launch {
+@@ -71,6 +78,26 @@ object ApplyWallpaperScreenBinder {
+                     }
+                 }
+ 
++                blurSwitch?.let { switch ->
++                    launch {
++                        combine(viewModel.currentPreviewScreen, viewModel.wallpaper, ::Pair)
++                            .collect { (screen, wallpaper) ->
++                                // Blur is only applied to static wallpapers.
++                                val show =
++                                    screen == PreviewScreen.APPLY_WALLPAPER &&
++                                        wallpaper is WallpaperModel.StaticWallpaperModel
++                                switch.isVisible = show
++                                if (show) {
++                                    previewPager.addClickableViewId(switch.id)
++                                } else {
++                                    previewPager.removeClickableViewId(switch.id)
++                                }
++                            }
++                    }
++
++                    launch { staticViewModel.isBlurEnabled.collect { switch.isChecked = it } }
++                }
++
+                 launch {
+                     combine(
+                             viewModel.applyWallpaperPreviewSelectedTab.filterNotNull(),
+diff --git a/src/com/android/wallpaper/picker/preview/ui/binder/StaticWallpaperPreviewBinder.kt b/src/com/android/wallpaper/picker/preview/ui/binder/StaticWallpaperPreviewBinder.kt
+index eb7f57b..d9b4664 100644
+--- a/src/com/android/wallpaper/picker/preview/ui/binder/StaticWallpaperPreviewBinder.kt
++++ b/src/com/android/wallpaper/picker/preview/ui/binder/StaticWallpaperPreviewBinder.kt
+@@ -38,6 +38,7 @@ import com.android.wallpaper.picker.preview.ui.view.SystemScaledSubsamplingScale
+ import com.android.wallpaper.picker.preview.ui.viewmodel.StaticWallpaperPreviewViewModel
+ import com.android.wallpaper.util.RtlUtils
+ import com.android.wallpaper.util.SurfaceViewUtils.attachView
++import com.android.wallpaper.util.WallpaperBlur
+ import com.android.wallpaper.util.WallpaperCropUtils
+ import com.davemorrissey.labs.subscaleview.ImageSource
+ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
+@@ -84,6 +85,16 @@ object StaticWallpaperPreviewBinder {
+         fullResImageView.initFullResImageView()
+ 
+         parentCoroutineScope.launch {
++            launch {
++                viewModel.isBlurEnabled.collect { blur ->
++                    fullResImageView.doOnLayout {
++                        it.setRenderEffect(
++                            if (blur) WallpaperBlur.createPreviewEffect(it.width) else null
++                        )
++                    }
++                }
++            }
++
+             // Show low res image only for small preview with supported wallpaper
+             if (!isFullScreen) {
+                 launch {
+diff --git a/src/com/android/wallpaper/picker/preview/ui/viewmodel/StaticWallpaperPreviewViewModel.kt b/src/com/android/wallpaper/picker/preview/ui/viewmodel/StaticWallpaperPreviewViewModel.kt
+index 04dfde9..9a51178 100644
+--- a/src/com/android/wallpaper/picker/preview/ui/viewmodel/StaticWallpaperPreviewViewModel.kt
++++ b/src/com/android/wallpaper/picker/preview/ui/viewmodel/StaticWallpaperPreviewViewModel.kt
+@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.SharingStarted
+ import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.asStateFlow
+ import kotlinx.coroutines.flow.combine
+ import kotlinx.coroutines.flow.distinctUntilChanged
+ import kotlinx.coroutines.flow.filter
+@@ -98,6 +99,14 @@ constructor(
+     val staticWallpaperModel: Flow<StaticWallpaperModel> =
+         interactor.wallpaperModel.map { it as? StaticWallpaperModel }.filterNotNull()
+ 
++    private val _isBlurEnabled = MutableStateFlow(false)
++    /** Whether the wallpaper is shown blurred in the preview and blurred when it is set. */
++    val isBlurEnabled: StateFlow<Boolean> = _isBlurEnabled.asStateFlow()
++
++    fun setBlurEnabled(enabled: Boolean) {
++        _isBlurEnabled.value = enabled
++    }
++
+     /** Null indicates the wallpaper has no low res image. */
+     val lowResBitmap: StateFlow<Bitmap?> =
+         staticWallpaperModel
+diff --git a/src/com/android/wallpaper/picker/preview/ui/viewmodel/WallpaperPreviewViewModel.kt b/src/com/android/wallpaper/picker/preview/ui/viewmodel/WallpaperPreviewViewModel.kt
+index ecfff69..941e8de 100644
+--- a/src/com/android/wallpaper/picker/preview/ui/viewmodel/WallpaperPreviewViewModel.kt
++++ b/src/com/android/wallpaper/picker/preview/ui/viewmodel/WallpaperPreviewViewModel.kt
+@@ -712,6 +712,7 @@ constructor(
+                                     } else {
+                                         it.fullPreviewCropModels
+                                     },
++                                blur = staticWallpaperPreviewViewModel.isBlurEnabled.value,
+                             )
+                         }
+                     is LiveWallpaperModel -> {
+diff --git a/src/com/android/wallpaper/util/WallpaperBlur.kt b/src/com/android/wallpaper/util/WallpaperBlur.kt
+new file mode 100644
+index 0000000..58e9756
+--- /dev/null
++++ b/src/com/android/wallpaper/util/WallpaperBlur.kt
+@@ -0,0 +1,122 @@
++/*
++ * Copyright (C) 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package com.android.wallpaper.util
++
++import android.graphics.Bitmap
++import android.graphics.RenderEffect
++import android.graphics.Shader
++import kotlin.math.max
++import kotlin.math.roundToInt
++import kotlin.math.sqrt
++
++/**
++ * Blur applied to a static wallpaper when the user enables "Blur" while setting it.
++ *
++ * The strength is relative to the visible width of the wallpaper, so the preview (a small view)
++ * and the applied wallpaper (a full resolution bitmap) look the same.
++ */
++object WallpaperBlur {
++
++    /** Gaussian sigma as a fraction of the visible wallpaper width. */
++    private const val SIGMA_FRACTION = 0.035f
++
++    private const val BOX_RADIUS = 4
++    private const val BOX_PASSES = 3
++
++    /** Sigma of [BOX_PASSES] box blurs of [BOX_RADIUS], which approximate a gaussian. */
++    private val BOX_SIGMA =
++        sqrt(BOX_PASSES * ((2 * BOX_RADIUS + 1) * (2 * BOX_RADIUS + 1) - 1) / 12f)
++
++    /** Blur for a preview view that shows the whole visible wallpaper across [viewWidth]. */
++    fun createPreviewEffect(viewWidth: Int): RenderEffect {
++        // RenderEffect takes a radius; Skia converts it to sigma = 0.57735 * radius + 0.5.
++        val radius = max(1f, (SIGMA_FRACTION * viewWidth - 0.5f) / 0.57735f)
++        return RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
++    }
++
++    /**
++     * Returns a blurred copy of [source], the same size as [source].
++     *
++     * @param visibleWidth width in [source] pixels of the part shown on the screen.
++     */
++    fun blur(source: Bitmap, visibleWidth: Int): Bitmap {
++        val src =
++            if (source.config == Bitmap.Config.HARDWARE) {
++                source.copy(Bitmap.Config.ARGB_8888, /* isMutable= */ false)
++            } else {
++                source
++            }
++        val sigma = SIGMA_FRACTION * visibleWidth
++        // Blur at a reduced size where the wanted sigma is BOX_SIGMA pixels, then scale back up.
++        // The result is smooth, so the bilinear upscale does not show.
++        val scale = (BOX_SIGMA / sigma).coerceAtMost(1f)
++        val width = max(1, (src.width * scale).roundToInt())
++        val height = max(1, (src.height * scale).roundToInt())
++
++        // Halve with filtering first, so large downscales average pixels instead of skipping them.
++        var small = src
++        while (small.width / 2 >= width && small.height / 2 >= height) {
++            small = Bitmap.createScaledBitmap(small, small.width / 2, small.height / 2, true)
++        }
++        small = Bitmap.createScaledBitmap(small, width, height, true)
++
++        val pixels = IntArray(width * height)
++        val temp = IntArray(width * height)
++        small.getPixels(pixels, 0, width, 0, 0, width, height)
++        repeat(BOX_PASSES) {
++            boxBlur(pixels, temp, width, height, horizontal = true)
++            boxBlur(temp, pixels, width, height, horizontal = false)
++        }
++        val blurred = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
++        return Bitmap.createScaledBitmap(blurred, src.width, src.height, true)
++    }
++
++    /** One box blur pass along rows or columns, clamping at the edges. */
++    private fun boxBlur(src: IntArray, dst: IntArray, width: Int, height: Int, horizontal: Boolean) {
++        val lines = if (horizontal) height else width
++        val length = if (horizontal) width else height
++        val step = if (horizontal) 1 else width
++        val window = 2 * BOX_RADIUS + 1
++        for (line in 0 until lines) {
++            val start = if (horizontal) line * width else line
++            var a = 0
++            var r = 0
++            var g = 0
++            var b = 0
++            for (i in -BOX_RADIUS..BOX_RADIUS) {
++                val p = src[start + i.coerceIn(0, length - 1) * step]
++                a += p ushr 24
++                r += (p shr 16) and 0xff
++                g += (p shr 8) and 0xff
++                b += p and 0xff
++            }
++            for (i in 0 until length) {
++                dst[start + i * step] =
++                    ((a / window) shl 24) or
++                        ((r / window) shl 16) or
++                        ((g / window) shl 8) or
++                        (b / window)
++                val outgoing = src[start + (i - BOX_RADIUS).coerceAtLeast(0) * step]
++                val incoming = src[start + (i + BOX_RADIUS + 1).coerceAtMost(length - 1) * step]
++                a += (incoming ushr 24) - (outgoing ushr 24)
++                r += ((incoming shr 16) and 0xff) - ((outgoing shr 16) and 0xff)
++                g += ((incoming shr 8) and 0xff) - ((outgoing shr 8) and 0xff)
++                b += (incoming and 0xff) - (outgoing and 0xff)
++            }
++        }
++    }
++}
+diff --git a/tests/common/src/com/android/wallpaper/testing/FakeWallpaperClient.kt b/tests/common/src/com/android/wallpaper/testing/FakeWallpaperClient.kt
+index 76e7b7d..2370a73 100644
+--- a/tests/common/src/com/android/wallpaper/testing/FakeWallpaperClient.kt
++++ b/tests/common/src/com/android/wallpaper/testing/FakeWallpaperClient.kt
+@@ -103,6 +103,7 @@ class FakeWallpaperClient @Inject constructor() : WallpaperClient {
+         wallpaperSize: Point,
+         asset: Asset,
+         fullPreviewCropModels: Map<Point, FullPreviewCropModel>?,
++        blur: Boolean,
+     ) {
+         addToWallpapersSet(wallpaperModel, destination)
+     }
+-- 
+2.56.0
+
