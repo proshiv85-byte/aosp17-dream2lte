@@ -55,7 +55,8 @@ icon: turn on themed icons in Wallpaper & style.
 | `hardware/google/pixel` | [android_hardware_google_pixel](https://github.com/proshiv85-byte/android_hardware_google_pixel) |
 | `hardware/lineage/compat` | [android_hardware_lineage_compat](https://github.com/proshiv85-byte/android_hardware_lineage_compat) |
 | `vendor/samsung` | [proprietary_vendor_samsung](https://github.com/proshiv85-byte/proprietary_vendor_samsung) |
-| kernel source | [android_kernel_samsung_universal8895](https://github.com/proshiv85-byte/android_kernel_samsung_universal8895) (branch `aosp17`) |
+| kernel source | [android_kernel_samsung_universal8895](https://github.com/proshiv85-byte/android_kernel_samsung_universal8895) (branch `aosp17-ksu-next`; `aosp17` without root) |
+| KernelSU-Next (kernel submodule) | [KernelSU-Next](https://github.com/proshiv85-byte/KernelSU-Next) (branch `legacy-4.4-kernel-read`) |
 
 Changes to AOSP's own projects are kept as patches in [`patches/`](patches)
 (bionic, build/make, build/blueprint, frameworks/native, hardware/interfaces,
@@ -134,6 +135,33 @@ cd - && ./flash-dream2lte.sh      # writes VENDOR + SYSTEM in verified chunks
 
 Then in TWRP: Wipe → Format Data (type `yes`), Wipe → Advanced → Cache, and
 reboot to System.
+
+## Root (KernelSU-Next)
+
+The kernel includes [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next)
+(legacy branch, manual hooks) built in. SELinux stays enforcing.
+
+1. Flash the KernelSU-Next boot image: in TWRP, Install → Install Image →
+   `boot-dream2lte-ksun-*.img` → Boot. Or, with `adb root` on a running phone:
+   `adb push boot.img /data/local/tmp/ && adb shell dd if=/data/local/tmp/boot.img of=/dev/block/by-name/BOOT`.
+   It is the release boot image with only the kernel replaced; system and
+   vendor are untouched.
+2. Install the KernelSU-Next manager. The kernel speaks interface version 6,
+   so use a manager built from the `dev` branch (the CI "manager" artifact).
+   v3.4.2 also works, but warns that its version is too low.
+3. Open the manager. It should show *Working · Built-in (legacy)*, and it
+   installs `ksud` on first start. Grant root to apps from the Superuser tab.
+
+Coming from Magisk: the Magisk-patched boot image is replaced, and `/data/adb/modules`
+is shared. Zygisk modules (LSPosed, Sui, ...) need a Zygisk provider module
+such as ZygiskNext or ReZygisk. Riru modules are not supported.
+
+Kernel side, on top of the `aosp17` kernel: the missing `read` and
+`input_handle_event` hooks, an `ALIGN_DOWN` backport, KernelSU-Next's
+`kernel_read`/`kernel_write` calls switched to its 4.4 compat wrappers (the
+manager signature check failed without this), a SELinux fix so KernelSU-Next's
+AVC reset does not stop the AVC from caching, and an init → ksu exemption in
+`check_nnp_nosuid` so init can exec `/data/adb/ksud` from the nosuid `/data`.
 
 ## Known quirks
 

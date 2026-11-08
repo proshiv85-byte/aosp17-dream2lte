@@ -13,5 +13,5 @@
 
   <!-- Kernel source; the build uses the prebuilt in device/samsung/dream2lte-kernel.
        Sync it with: repo sync -g kernel-src (after repo init ... -g default,...,kernel-src) -->
-  <project path="kernel/samsung/universal8895" name="android_kernel_samsung_universal8895" remote="dream2lte" revision="aosp17" groups="kernel-src,notdefault" />
+  <project path="kernel/samsung/universal8895" name="android_kernel_samsung_universal8895" remote="dream2lte" revision="aosp17-ksu-next" sync-s="true" groups="kernel-src,notdefault" />
 </manifest>
